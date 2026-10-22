@@ -19,10 +19,6 @@ namespace base {
 class PowerSaveBlocker;
 } // namespace base
 
-namespace Calls {
-class GroupCall;
-} // namespace Calls
-
 namespace ChatHelpers {
 class Show;
 struct FileChosen;
@@ -33,25 +29,15 @@ struct FileOrigin;
 class DocumentMedia;
 } // namespace Data
 
-namespace HistoryView::Controls {
-enum class ToggleCommentsState;
-struct SendStarButtonEffect;
-} // namespace HistoryView::Controls
-
 namespace HistoryView::Reactions {
 struct ChosenReaction;
 enum class AttachSelectorResult;
 } // namespace HistoryView::Reactions
 
-namespace HistoryView {
-class PaidReactionToast;
-} // namespace HistoryView
-
 namespace Ui {
 class RpWidget;
 class BoxContent;
 class PopupMenu;
-struct SendStarButtonState;
 } // namespace Ui
 
 namespace Ui::Toast {
@@ -84,10 +70,6 @@ class RepostView;
 enum class ReactionsMode;
 class StoryAreaView;
 struct RepostClickHandler;
-
-using CommentsState = HistoryView::Controls::ToggleCommentsState;
-using PaidReactionToast = HistoryView::PaidReactionToast;
-using SendStarButtonEffect = HistoryView::Controls::SendStarButtonEffect;
 
 enum class HeaderLayout {
 	Normal,
@@ -139,7 +121,6 @@ public:
 	[[nodiscard]] bool closeByClickAt(QPoint position) const;
 	[[nodiscard]] Data::FileOrigin fileOrigin() const;
 	[[nodiscard]] TextWithEntities captionText() const;
-	[[nodiscard]] bool videoStream() const;
 	[[nodiscard]] bool skipCaption() const;
 	[[nodiscard]] bool repost() const;
 	void toggleLiked();
@@ -184,14 +165,6 @@ public:
 	[[nodiscard]] const Data::StoryViews &views(int limit, bool initial);
 	[[nodiscard]] rpl::producer<> moreViewsLoaded() const;
 
-	[[nodiscard]] rpl::producer<CommentsState> commentsStateValue() const;
-	void setCommentsShownToggles(rpl::producer<> toggles);
-	[[nodiscard]] auto starsReactionsValue() const
-		-> rpl::producer<Ui::SendStarButtonState>;
-	[[nodiscard]] auto starsReactionsEffects() const
-		-> rpl::producer<SendStarButtonEffect>;
-	void setStarsReactionIncrements(rpl::producer<int> increments);
-
 	void unfocusReply();
 	void shareRequested();
 	void deleteRequested();
@@ -208,8 +181,6 @@ public:
 	[[nodiscard]] AttachStripResult attachReactionsToMenu(
 		not_null<Ui::PopupMenu*> menu,
 		QPoint desiredPosition);
-
-	void updateVideoStream(not_null<Calls::GroupCall*> videoStream);
 
 	[[nodiscard]] rpl::lifetime &lifetime();
 
@@ -243,11 +214,6 @@ private:
 		float64 radius = 0.;
 		ClickHandlerPtr handler;
 		std::unique_ptr<StoryAreaView> view;
-	};
-	enum class CommentsHas {
-		None,
-		AllRead,
-		WithUnread,
 	};
 
 	void initLayout();
@@ -297,8 +263,6 @@ private:
 	[[nodiscard]] int repostSkipTop() const;
 	void updateAreas(Data::Story *story);
 	bool reactionChosen(ReactionsMode mode, ChosenReaction chosen);
-	[[nodiscard]] rpl::producer<int> paidReactionToastTopValue() const;
-	void clearVideoStreamCall();
 
 	const not_null<Delegate*> _delegate;
 
@@ -314,11 +278,6 @@ private:
 	std::unique_ptr<PhotoPlayback> _photoPlayback;
 	std::unique_ptr<CaptionFullView> _captionFullView;
 	std::unique_ptr<RepostView> _repostView;
-
-	std::shared_ptr<Data::GroupCall> _videoStream;
-	base::weak_ptr<Calls::GroupCall> _videoStreamCall;
-	std::unique_ptr<PaidReactionToast> _paidReactionToast;
-	rpl::lifetime _videoStreamLifetime;
 
 	Ui::Animations::Simple _contentFadeAnimation;
 	bool _contentFaded = false;
@@ -350,15 +309,6 @@ private:
 	std::vector<Data::WeatherArea> _weatherAreas;
 	mutable std::vector<ActiveArea> _areas;
 	mutable rpl::variable<bool> _weatherInCelsius;
-
-	rpl::variable<CommentsState> _commentsState;
-	rpl::event_stream<CommentsState> _commentsStateShowFromPinned;
-	rpl::variable<CommentsHas> _commentsHas;
-	MsgId _commentsLastReadId = 0;
-	MsgId _commentsLastId = 0;
-	rpl::variable<int> _starsReactions;
-	rpl::variable<bool> _starsReactionHighlighted;
-	rpl::event_stream<SendStarButtonEffect> _starsReactionEffects;
 
 	std::vector<CachedSource> _cachedSourcesList;
 	int _cachedSourceIndex = -1;

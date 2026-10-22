@@ -61,10 +61,6 @@ struct FileReferenceAccumulator {
 			push(data.vstickers());
 		}, [&](const MTPDwebPageAttributeUniqueStarGift &data) {
 			push(data.vgift());
-		}, [&](const MTPDwebPageAttributeStarGiftCollection &data) {
-			push(data.vicons());
-		}, [&](const MTPDwebPageAttributeStarGiftAuction &data) {
-			push(data.vgift());
 		});
 	}
 	void push(const MTPStarGift &data) {
@@ -206,12 +202,6 @@ struct FileReferenceAccumulator {
 	void push(const MTPstories_Stories &data) {
 		push(data.data().vstories());
 	}
-	void push(const MTPusers_SavedMusic &data) {
-		data.match([&](const MTPDusers_savedMusic &data) {
-			push(data.vdocuments());
-		}, [](const MTPDusers_savedMusicNotModified &data) {
-		});
-	}
 
 	UpdatedFileReferences result;
 };
@@ -278,10 +268,6 @@ UpdatedFileReferences GetFileReferences(const MTPmessages_WebPage &data) {
 }
 
 UpdatedFileReferences GetFileReferences(const MTPstories_Stories &data) {
-	return GetFileReferencesHelper(data);
-}
-
-UpdatedFileReferences GetFileReferences(const MTPusers_SavedMusic &data) {
 	return GetFileReferencesHelper(data);
 }
 

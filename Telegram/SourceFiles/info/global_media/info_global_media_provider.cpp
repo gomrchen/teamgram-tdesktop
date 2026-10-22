@@ -111,12 +111,12 @@ Provider::Provider(not_null<AbstractController*> controller)
 , _type(_controller->section().mediaType())
 , _slice(sliceKey(_aroundId)) {
 	_controller->session().data().itemRemoved(
-	) | rpl::on_next([this](auto item) {
+	) | rpl::start_with_next([this](auto item) {
 		itemRemoved(item);
 	}, _lifetime);
 
 	style::PaletteChanged(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		for (auto &layout : _layouts) {
 			layout.second.item->invalidateCache();
 		}
@@ -341,7 +341,7 @@ void Provider::refreshViewer() {
 			_idsLimit,
 			_idsLimit);
 	}) | rpl::flatten_latest(
-	) | rpl::on_next([=](GlobalMediaSlice &&slice) {
+	) | rpl::start_with_next([=](GlobalMediaSlice &&slice) {
 		if (!slice.fullCount()) {
 			// Don't display anything while full count is unknown.
 			return;
@@ -421,10 +421,6 @@ bool Provider::isAfter(
 
 void Provider::setSearchQuery(QString query) {
 	Unexpected("Media::Provider::setSearchQuery.");
-}
-
-void Provider::jumpToMessage(MsgId messageId, Fn<void(FullMsgId)>) {
-	Unexpected("GlobalMedia::Provider::jumpToMessage.");
 }
 
 GlobalMediaKey Provider::sliceKey(Data::MessagePosition aroundId) const {

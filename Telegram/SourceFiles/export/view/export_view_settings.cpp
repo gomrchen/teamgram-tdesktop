@@ -149,7 +149,7 @@ void SettingsWidget::setupContent() {
 	setupPathAndFormat(content);
 
 	sizeValue(
-	) | rpl::on_next([=](QSize size) {
+	) | rpl::start_with_next([=](QSize size) {
 		scroll->resize(size.width(), size.height() - buttons->height());
 		wrap->resizeToWidth(size.width());
 		content->resizeToWidth(size.width());
@@ -183,11 +183,6 @@ void SettingsWidget::setupFullExportOptions(
 		tr::lng_export_option_stories(tr::now),
 		Type::Stories,
 		tr::lng_export_option_stories_about(tr::now));
-	addOptionWithAbout(
-		container,
-		tr::lng_export_option_profile_music(tr::now),
-		Type::ProfileMusic,
-		tr::lng_export_option_profile_music_about(tr::now));
 	addHeader(container, tr::lng_export_header_chats(tr::now));
 	addOption(
 		container,
@@ -232,18 +227,17 @@ void SettingsWidget::setupMediaOptions(
 	value() | rpl::map([](const Settings &data) {
 		return data.types;
 	}) | rpl::distinct_until_changed(
-	) | rpl::on_next([=](Settings::Types types) {
+	) | rpl::start_with_next([=](Settings::Types types) {
 		mediaWrap->toggle((types & (Type::PersonalChats
 			| Type::BotChats
 			| Type::PrivateGroups
 			| Type::PrivateChannels
 			| Type::PublicGroups
-			| Type::PublicChannels
-			| Type::ProfileMusic)) != 0, anim::type::normal);
+			| Type::PublicChannels)) != 0, anim::type::normal);
 	}, mediaWrap->lifetime());
 
 	widthValue(
-	) | rpl::on_next([=](int width) {
+	) | rpl::start_with_next([=](int width) {
 		mediaWrap->resizeToWidth(width);
 	}, mediaWrap->lifetime());
 }
@@ -306,7 +300,7 @@ void SettingsWidget::addLocationLabel(
 			? u"Downloads/"_q + File::DefaultDownloadPathFolder(_session)
 			: tr::lng_download_path_temp(tr::now)
 			: path;
-		return tr::link(
+		return Ui::Text::Link(
 			QDir::toNativeSeparators(text),
 			QString("internal:edit_export_path"));
 	});
@@ -316,7 +310,7 @@ void SettingsWidget::addLocationLabel(
 			tr::lng_export_option_location(
 				lt_path,
 				std::move(pathLink),
-				tr::marked),
+				Ui::Text::WithEntities),
 			st::exportLocationLabel),
 		st::exportLocationPadding);
 	label->overrideLinkClickHandler([=] {
@@ -326,20 +320,20 @@ void SettingsWidget::addLocationLabel(
 }
 
 void SettingsWidget::chooseFormat() {
-	const auto shared = std::make_shared<base::weak_qptr<Ui::GenericBox>>();
+	const auto shared = std::make_shared<QPointer<Ui::GenericBox>>();
 	const auto callback = [=](Format format) {
 		changeData([&](Settings &data) {
 			data.format = format;
 		});
-		if (const auto strong = shared->get()) {
-			strong->closeBox();
+		if (const auto weak = shared->data()) {
+			weak->closeBox();
 		}
 	};
 	auto box = Box(
 		ChooseFormatBox,
 		readData().format,
 		callback);
-	*shared = base::make_weak(box.data());
+	*shared = Ui::MakeWeak(box.data());
 	_showBoxCallback(std::move(box));
 }
 
@@ -355,7 +349,7 @@ void SettingsWidget::addFormatAndLocationLabel(
 			? u"Downloads/"_q + File::DefaultDownloadPathFolder(_session)
 			: tr::lng_download_path_temp(tr::now)
 			: path;
-		return tr::link(
+		return Ui::Text::Link(
 			QDir::toNativeSeparators(text),
 			u"internal:edit_export_path"_q);
 	});
@@ -368,7 +362,7 @@ void SettingsWidget::addFormatAndLocationLabel(
 			: (format == Format::Json)
 			? "JSON"
 			: tr::lng_export_option_html_and_json(tr::now);
-		return tr::link(text, u"internal:edit_format"_q);
+		return Ui::Text::Link(text, u"internal:edit_format"_q);
 	});
 	const auto label = container->add(
 		object_ptr<Ui::FlatLabel>(
@@ -378,7 +372,7 @@ void SettingsWidget::addFormatAndLocationLabel(
 				std::move(formatLink),
 				lt_path,
 				std::move(pathLink),
-				tr::marked),
+				Ui::Text::WithEntities),
 			st::exportLocationLabel),
 		st::exportLocationPadding);
 	label->overrideLinkClickHandler([=](const QString &url) {
@@ -403,7 +397,7 @@ void SettingsWidget::addLimitsLabel(
 			? rpl::single(langDayOfMonthFull(
 				base::unixtime::parse(from).date()))
 			: tr::lng_export_beginning()
-		) | rpl::map(tr::url(u"internal:edit_from"_q));
+		) | Ui::Text::ToLink(u"internal:edit_from"_q);
 	}) | rpl::flatten_latest();
 
 	const auto mapToTime = [](TimeId id, const QString &link) {
@@ -412,7 +406,7 @@ void SettingsWidget::addLimitsLabel(
 				base::unixtime::parse(id).time(),
 				QLocale::ShortFormat)
 			: QString()
-		) | rpl::map(tr::url(link));
+		) | Ui::Text::ToLink(link);
 	};
 
 	const auto concat = [](TextWithEntities date, TextWithEntities link) {
@@ -441,7 +435,7 @@ void SettingsWidget::addLimitsLabel(
 			? rpl::single(langDayOfMonthFull(
 				base::unixtime::parse(till).date()))
 			: tr::lng_export_end()
-		) | rpl::map(tr::url(u"internal:edit_till"_q));
+		) | Ui::Text::ToLink(u"internal:edit_till"_q);
 	}) | rpl::flatten_latest();
 
 	auto tillTimeLink = value() | rpl::map([](const Settings &data) {
@@ -461,7 +455,7 @@ void SettingsWidget::addLimitsLabel(
 		std::move(fromLink),
 		lt_till,
 		std::move(tillLink),
-		tr::marked
+		Ui::Text::WithEntities
 	) | rpl::after_next([=] {
 		container->resizeToWidth(container->width());
 	});
@@ -495,7 +489,7 @@ void SettingsWidget::addLimitsLabel(
 			const auto toSave = widget->lifetime().make_state<TimeId>(0);
 			std::move(
 				result.secondsValue
-			) | rpl::on_next([=](TimeId t) {
+			) | rpl::start_with_next([=](TimeId t) {
 				*toSave = t;
 			}, box->lifetime());
 			box->addButton(tr::lng_settings_save(), [=] {
@@ -608,20 +602,20 @@ void SettingsWidget::editDateLimit(
 		? base::unixtime::parse(min).date()
 		: QDate::currentDate();
 	const auto month = highlighted;
-	const auto shared = std::make_shared<base::weak_qptr<Ui::CalendarBox>>();
+	const auto shared = std::make_shared<QPointer<Ui::CalendarBox>>();
 	const auto finalize = [=](not_null<Ui::CalendarBox*> box) {
 		box->addLeftButton(std::move(resetLabel), crl::guard(this, [=] {
 			done(0);
-			if (const auto weak = shared->get()) {
+			if (const auto weak = shared->data()) {
 				weak->closeBox();
 			}
 		}));
 	};
-	const auto callback = crl::guard(this, [=](
-			const QDate &date,
-			Fn<void()> close) {
+	const auto callback = crl::guard(this, [=](const QDate &date) {
 		done(base::unixtime::serialize(date.startOfDay()));
-		close();
+		if (const auto weak = shared->data()) {
+			weak->closeBox();
+		}
 	});
 	auto box = Box<Ui::CalendarBox>(Ui::CalendarBoxArgs{
 		.month = month,
@@ -636,7 +630,7 @@ void SettingsWidget::editDateLimit(
 			? base::unixtime::parse(max).date()
 			: QDate::currentDate()),
 	});
-	*shared = base::make_weak(box.data());
+	*shared = Ui::MakeWeak(box.data());
 	_showBoxCallback(std::move(box));
 }
 
@@ -668,14 +662,14 @@ not_null<Ui::RpWidget*> SettingsWidget::setupButtons(
 	value() | rpl::map([](const Settings &data) {
 		return (data.types != Types(0)) || data.onlySinglePeer();
 	}) | rpl::distinct_until_changed(
-	) | rpl::on_next([=](bool canStart) {
+	) | rpl::start_with_next([=](bool canStart) {
 		refreshButtons(buttons, canStart);
 		topShadow->raise();
 		bottomShadow->raise();
 	}, buttons->lifetime());
 
 	sizeValue(
-	) | rpl::on_next([=](QSize size) {
+	) | rpl::start_with_next([=](QSize size) {
 		buttons->resizeToWidth(size.width());
 		buttons->moveToLeft(0, size.height() - buttons->height());
 		topShadow->resizeToWidth(size.width());
@@ -710,7 +704,7 @@ not_null<Ui::Checkbox*> SettingsWidget::addOption(
 			st::defaultBoxCheckbox),
 		st::exportSettingPadding);
 	checkbox->checkedChanges(
-	) | rpl::on_next([=](bool checked) {
+	) | rpl::start_with_next([=](bool checked) {
 		changeData([&](Settings &data) {
 			if (checked) {
 				data.types |= types;
@@ -753,7 +747,7 @@ void SettingsWidget::addChatOption(
 			st::exportSubSettingPadding));
 
 	onlyMy->entity()->checkedChanges(
-	) | rpl::on_next([=](bool checked) {
+	) | rpl::start_with_next([=](bool checked) {
 		changeData([&](Settings &data) {
 			if (checked) {
 				data.fullChats &= ~types;
@@ -816,7 +810,7 @@ void SettingsWidget::addMediaOption(
 			st::defaultBoxCheckbox),
 		st::exportSettingPadding);
 	checkbox->checkedChanges(
-	) | rpl::on_next([=](bool checked) {
+	) | rpl::start_with_next([=](bool checked) {
 		changeData([&](Settings &data) {
 			if (checked) {
 				data.media.types |= type;
@@ -850,7 +844,7 @@ void SettingsWidget::addSizeSlider(
 		st::exportFileSizeLabel);
 	value() | rpl::map([](const Settings &data) {
 		return data.media.sizeLimit;
-	}) | rpl::on_next([=](int64 sizeLimit) {
+	}) | rpl::start_with_next([=](int64 sizeLimit) {
 		const auto limit = sizeLimit / kMegabyte;
 		const auto size = QString::number(limit) + " MB";
 		const auto text = tr::lng_export_option_size_limit(
@@ -864,7 +858,7 @@ void SettingsWidget::addSizeSlider(
 		label->widthValue(),
 		slider->geometryValue(),
 		_2
-	) | rpl::on_next([=](QRect geometry) {
+	) | rpl::start_with_next([=](QRect geometry) {
 		label->moveToRight(
 			st::exportFileSizePadding.right(),
 			geometry.y() - label->height() - st::exportFileSizeLabelBottom);
@@ -893,7 +887,7 @@ void SettingsWidget::refreshButtons(
 		_startClicks = start->clicks() | rpl::to_empty;
 
 		container->sizeValue(
-		) | rpl::on_next([=](QSize size) {
+		) | rpl::start_with_next([=](QSize size) {
 			const auto right = st::defaultBox.buttonPadding.right();
 			const auto top = st::defaultBox.buttonPadding.top();
 			start->moveToRight(right, top);
@@ -911,7 +905,7 @@ void SettingsWidget::refreshButtons(
 	rpl::combine(
 		container->sizeValue(),
 		start ? start->widthValue() : rpl::single(0)
-	) | rpl::on_next([=](QSize size, int width) {
+	) | rpl::start_with_next([=](QSize size, int width) {
 		const auto right = st::defaultBox.buttonPadding.right()
 			+ (width ? width + st::defaultBox.buttonPadding.left() : 0);
 		const auto top = st::defaultBox.buttonPadding.top();

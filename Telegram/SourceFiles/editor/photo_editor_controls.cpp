@@ -14,10 +14,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/labels.h"
 #include "ui/wrap/fade_wrap.h"
 #include "ui/painter.h"
-#include "ui/rect.h"
 #include "styles/style_editor.h"
-
-#include <QRegion>
 
 namespace Editor {
 
@@ -27,6 +24,7 @@ public:
 		not_null<Ui::RpWidget*> parent,
 		const QString &text,
 		int height,
+		bool left,
 		const style::color &bg,
 		const style::color &fg,
 		const style::RippleAnimation &st);
@@ -43,6 +41,7 @@ private:
 	const int _width;
 	const QRect _rippleRect;
 	const QColor _bg;
+	const bool _left;
 
 	QImage rounded(std::optional<QColor> color) const;
 
@@ -52,6 +51,7 @@ EdgeButton::EdgeButton(
 	not_null<Ui::RpWidget*> parent,
 	const QString &text,
 	int height,
+	bool left,
 	const style::color &bg,
 	const style::color &fg,
 	const style::RippleAnimation &st)
@@ -61,40 +61,27 @@ EdgeButton::EdgeButton(
 , _width(_text.maxWidth()
 	+ st::photoEditorTextButtonPadding.left()
 	+ st::photoEditorTextButtonPadding.right())
-, _rippleRect(QRect(
-	rect::m::pos::tl(st::photoEditorEdgeButtonMargins),
-	QSize(
-		_width,
-		height - rect::m::sum::v(st::photoEditorEdgeButtonMargins))))
-, _bg(bg->c) {
-	resize(
-		_width + rect::m::sum::h(st::photoEditorEdgeButtonMargins),
-		height);
+, _rippleRect(QRect(0, 0, _width, height))
+, _bg(bg->c)
+, _left(left) {
+	resize(_width, height);
 	init();
 }
 
 void EdgeButton::init() {
-	const auto bg = rounded(_bg);
+	// const auto bg = rounded(_bg);
 
 	paintRequest(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		Painter p(this);
 
-		if (isOver()) {
-			p.drawImage(_rippleRect.topLeft(), bg);
-		}
+		// p.drawImage(QPoint(), bg);
 
 		paintRipple(p, _rippleRect.x(), _rippleRect.y());
 
 		p.setPen(_fg);
-		const auto textTop = _rippleRect.y()
-			+ (_rippleRect.height() - _text.minHeight()) / 2;
-		_text.draw(
-			p,
-			_rippleRect.x(),
-			textTop,
-			_rippleRect.width(),
-			style::al_center);
+		const auto textTop = st::photoEditorButtonTextTop;
+		_text.draw(p, 0, textTop, width(), style::al_center);
 	}, lifetime());
 }
 
@@ -105,10 +92,10 @@ QImage EdgeButton::rounded(std::optional<QColor> color) const {
 	result.setDevicePixelRatio(style::DevicePixelRatio());
 	result.fill(color.value_or(Qt::white));
 
-	const auto radius = std::min(_rippleRect.width(), _rippleRect.height())
-		/ 2;
-	const auto mask = Images::CornersMask(radius);
-	return Images::Round(std::move(result), mask);
+	const auto parts = RectPart::None
+		| (_left ? RectPart::TopLeft : RectPart::TopRight)
+		| (_left ? RectPart::BottomLeft : RectPart::BottomRight);
+	return Images::Round(std::move(result), ImageRoundRadius::Large, parts);
 }
 
 QImage EdgeButton::prepareRippleMask() const {
@@ -135,7 +122,7 @@ ButtonBar::ButtonBar(
 	const style::color &bg)
 : RpWidget(parent) {
 	sizeValue(
-	) | rpl::on_next([=](const QSize &size) {
+	) | rpl::start_with_next([=](const QSize &size) {
 		const auto children = RpWidget::children();
 		const auto widgets = ranges::views::all(
 			children
@@ -188,13 +175,13 @@ ButtonBar::ButtonBar(
 		result.setDevicePixelRatio(style::DevicePixelRatio());
 		result.fill(bg->c);
 
-		const auto radius = std::min(size.width(), size.height()) / 2;
-		const auto mask = Images::CornersMask(radius);
-		_roundedBg = Images::Round(std::move(result), mask);
+		_roundedBg = Images::Round(
+			std::move(result),
+			ImageRoundRadius::Large);
 	}, lifetime());
 
 	paintRequest(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		auto p = QPainter(this);
 		p.drawImage(QPoint(), _roundedBg);
 	}, lifetime());
@@ -223,7 +210,8 @@ PhotoEditorControls::PhotoEditorControls(
 	_transformButtons,
 	tr::lng_cancel(tr::now),
 	_buttonHeight,
-	st::photoEditorEdgeButtonBg,
+	true,
+	_bg,
 	st::mediaviewCaptionFg,
 	st::photoEditorRotateButton.ripple))
 , _flipButton(base::make_unique_q<Ui::IconButton>(
@@ -239,14 +227,16 @@ PhotoEditorControls::PhotoEditorControls(
 	_transformButtons,
 	(data.confirm.isEmpty() ? tr::lng_box_done(tr::now) : data.confirm),
 	_buttonHeight,
-	st::photoEditorEdgeButtonBg,
+	false,
+	_bg,
 	st::mediaviewTextLinkFg,
 	st::photoEditorRotateButton.ripple))
 , _paintCancel(base::make_unique_q<EdgeButton>(
 	_paintBottomButtons,
 	tr::lng_cancel(tr::now),
 	_buttonHeight,
-	st::photoEditorEdgeButtonBg,
+	true,
+	_bg,
 	st::mediaviewCaptionFg,
 	st::photoEditorRotateButton.ripple))
 , _undoButton(base::make_unique_q<Ui::IconButton>(
@@ -267,7 +257,8 @@ PhotoEditorControls::PhotoEditorControls(
 	_paintBottomButtons,
 	tr::lng_box_done(tr::now),
 	_buttonHeight,
-	st::photoEditorEdgeButtonBg,
+	false,
+	_bg,
 	st::mediaviewTextLinkFg,
 	st::photoEditorRotateButton.ripple)) {
 
@@ -278,7 +269,7 @@ PhotoEditorControls::PhotoEditorControls(
 	_paintModeButtonActive->setAttribute(Qt::WA_TransparentForMouseEvents);
 
 	sizeValue(
-	) | rpl::on_next([=](const QSize &size) {
+	) | rpl::start_with_next([=](const QSize &size) {
 		if (size.isEmpty()) {
 			return;
 		}
@@ -313,7 +304,7 @@ PhotoEditorControls::PhotoEditorControls(
 	}, lifetime());
 
 	_mode.changes(
-	) | rpl::on_next([=](const PhotoEditorMode &mode) {
+	) | rpl::start_with_next([=](const PhotoEditorMode &mode) {
 		if (mode.mode == PhotoEditorMode::Mode::Out) {
 			return;
 		}
@@ -325,7 +316,7 @@ PhotoEditorControls::PhotoEditorControls(
 	}, lifetime());
 
 	_paintBottomButtons->positionValue(
-	) | rpl::on_next([=](const QPoint &containerPos) {
+	) | rpl::start_with_next([=](const QPoint &containerPos) {
 		_paintTopButtons->moveToLeft(
 			containerPos.x(),
 			containerPos.y()
@@ -334,27 +325,9 @@ PhotoEditorControls::PhotoEditorControls(
 	}, _paintBottomButtons->lifetime());
 
 	_paintBottomButtons->shownValue(
-	) | rpl::on_next([=](bool shown) {
+	) | rpl::start_with_next([=](bool shown) {
 		_paintTopButtons->setVisible(shown);
 	}, _paintBottomButtons->lifetime());
-
-	auto aboutChanges = _about
-		? rpl::merge(
-			_about->geometryValue() | rpl::to_empty,
-			_about->shownValue() | rpl::to_empty)
-		: rpl::never<>() | rpl::type_erased;
-	rpl::merge(
-		geometryValue() | rpl::to_empty,
-		_transformButtons->geometryValue() | rpl::to_empty,
-		_transformButtons->shownValue() | rpl::to_empty,
-		_paintBottomButtons->geometryValue() | rpl::to_empty,
-		_paintBottomButtons->shownValue() | rpl::to_empty,
-		_paintTopButtons->geometryValue() | rpl::to_empty,
-		_paintTopButtons->shownValue() | rpl::to_empty,
-		std::move(aboutChanges)
-	) | rpl::on_next([=] {
-		updateInputMask();
-	}, lifetime());
 
 	controllers->undoController->setPerformRequestChanges(rpl::merge(
 		_undoButton->clicks() | rpl::map_to(Undo::Undo),
@@ -377,7 +350,7 @@ PhotoEditorControls::PhotoEditorControls(
 		})));
 
 	controllers->undoController->canPerformChanges(
-	) | rpl::on_next([=](const UndoController::EnableRequest &r) {
+	) | rpl::start_with_next([=](const UndoController::EnableRequest &r) {
 		const auto isUndo = (r.command == Undo::Undo);
 		const auto &button = isUndo ? _undoButton : _redoButton;
 		button->setAttribute(Qt::WA_TransparentForMouseEvents, !r.enable);
@@ -412,7 +385,7 @@ PhotoEditorControls::PhotoEditorControls(
 			}));
 
 		controllers->stickersPanelController->panelShown(
-		) | rpl::on_next([=](bool shown) {
+		) | rpl::start_with_next([=](bool shown) {
 			const auto icon = shown
 				? &st::photoEditorStickersIconActive
 				: nullptr;
@@ -424,13 +397,11 @@ PhotoEditorControls::PhotoEditorControls(
 		modifications.flipped ? 0 : 1
 	) | rpl::then(
 		_flipButton->clicks() | rpl::to_empty
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		_flipped = !_flipped;
 		const auto icon = _flipped ? &st::photoEditorFlipIconActive : nullptr;
 		_flipButton->setIconOverride(icon, icon);
 	}, _flipButton->lifetime());
-
-	updateInputMask();
 
 }
 
@@ -543,33 +514,6 @@ void PhotoEditorControls::showAnimated(
 			0.,
 			1.,
 			duration);
-	}
-}
-
-void PhotoEditorControls::updateInputMask() {
-	auto region = QRegion();
-	const auto visibleRect = rect();
-	const auto add = [&](not_null<const QWidget*> widget) {
-		if (!widget->isHidden()) {
-			const auto geometry = widget->geometry() & visibleRect;
-			if (!geometry.isEmpty()) {
-				region += geometry;
-			}
-		}
-	};
-	add(_transformButtons);
-	add(_paintBottomButtons);
-	add(_paintTopButtons);
-	if (_about && !_about->isHidden()) {
-		const auto geometry = _about->geometry() & visibleRect;
-		if (!geometry.isEmpty()) {
-			region += geometry;
-		}
-	}
-	if (region.isEmpty()) {
-		clearMask();
-	} else {
-		setMask(region);
 	}
 }
 

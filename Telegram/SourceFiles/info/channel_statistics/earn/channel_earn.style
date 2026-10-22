@@ -148,8 +148,4 @@ botEarnLockedButtonLabel: FlatLabel(channelEarnOverviewMajorLabel) {
 		font: font(10px semibold);
 	}
 }
-botEarnButtonLock: IconEmoji {
-	icon: icon{{ "chat/mini_lock", premiumButtonFg }};
-	padding: margins(-2px, 4px, 0px, 0px);
-}
-
+botEarnButtonLockMargins: margins(-2px, 4px, 0px, 0px);

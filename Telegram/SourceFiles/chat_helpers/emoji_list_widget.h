@@ -13,8 +13,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/round_rect.h"
 #include "base/timer.h"
 
-#include <map>
-
 class StickerPremiumMark;
 
 namespace style {
@@ -60,7 +58,6 @@ struct RepaintRequest;
 
 namespace Window {
 class SessionController;
-class MediaPreviewWidget;
 } // namespace Window
 
 namespace ChatHelpers {
@@ -101,8 +98,6 @@ struct EmojiListDescriptor {
 	base::flat_set<DocumentId> freeEffects;
 	const style::EmojiPan *st = nullptr;
 	ComposeFeatures features;
-	QWidget *mediaPreviewParent = nullptr;
-	QMargins mediaPreviewMargins;
 };
 
 class EmojiListWidget final
@@ -404,8 +399,6 @@ private:
 		uint64 setId);
 
 	void showPreview();
-	void showPreviewFor(not_null<DocumentData*> document);
-	void ensureMediaPreview();
 
 	void applyNextSearchQuery();
 
@@ -413,8 +406,6 @@ private:
 	const ComposeFeatures _features;
 	const bool _onlyUnicodeEmoji;
 	Mode _mode = Mode::Full;
-	QWidget *_mediaPreviewParent = nullptr;
-	QMargins _mediaPreviewMargins;
 	std::unique_ptr<Ui::TabbedSearch> _search;
 	MTP::Sender _api;
 	const int _staticCount = 0;
@@ -440,7 +431,7 @@ private:
 	QVector<EmojiPtr> _emoji[kEmojiSectionCount];
 	std::vector<CustomSet> _custom;
 	base::flat_set<DocumentId> _restrictedCustomList;
-	std::map<EmojiStatusId, CustomEmojiInstance> _customEmoji;
+	base::flat_map<EmojiStatusId, CustomEmojiInstance> _customEmoji;
 	base::flat_map<
 		DocumentId,
 		std::unique_ptr<Ui::Text::CustomEmoji>> _customRecent;
@@ -487,9 +478,6 @@ private:
 	base::Timer _showPickerTimer;
 	base::Timer _previewTimer;
 	bool _previewShown = false;
-
-
-	base::unique_qptr<Window::MediaPreviewWidget> _mediaPreview;
 
 	rpl::event_stream<EmojiChosen> _chosen;
 	rpl::event_stream<FileChosen> _customChosen;

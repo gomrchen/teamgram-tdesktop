@@ -22,7 +22,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/stickers/data_custom_emoji.h"
 #include "history/view/history_view_schedule_box.h"
 #include "lang/lang_keys.h"
-#include "main/main_app_config.h"
 #include "main/main_session.h"
 #include "menu/menu_send.h"
 #include "ui/controls/emoji_button.h"
@@ -114,7 +113,7 @@ private:
 		void setPlaceholder() const;
 		void removePlaceholder() const;
 
-		[[nodiscard]] not_null<Ui::InputField*> field() const;
+		not_null<Ui::InputField*> field() const;
 
 		[[nodiscard]] PollAnswer toPollAnswer(int index) const;
 
@@ -177,8 +176,7 @@ void InitField(
 		not_null<Main::Session*> session) {
 	field->setInstantReplaces(Ui::InstantReplaces::Default());
 	field->setInstantReplacesEnabled(
-		Core::App().settings().replaceEmojiValue(),
-		Core::App().settings().systemTextReplaceValue());
+		Core::App().settings().replaceEmojiValue());
 	auto options = Ui::Emoji::SuggestionsController::Options();
 	options.suggestExactFirstWord = false;
 	Ui::Emoji::SuggestionsController::Init(
@@ -199,7 +197,7 @@ not_null<Ui::FlatLabel*> CreateWarningLabel(
 		st::createPollWarning);
 	result->setAttribute(Qt::WA_TransparentForMouseEvents);
 	field->changes(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		Ui::PostponeCall(crl::guard(field, [=] {
 			const auto length = field->getLastText().size();
 			const auto value = valueLimit - length;
@@ -247,21 +245,22 @@ Options::Option::Option(
 	InitField(outer, _field, session);
 	_field->setMaxLength(kOptionLimit + kErrorLimit);
 	_field->show();
+	_field->customTab(true);
 
 	_wrap->hide(anim::type::instant);
 
 	_content->widthValue(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		updateFieldGeometry();
 	}, _field->lifetime());
 
 	_field->heightValue(
-	) | rpl::on_next([=](int height) {
+	) | rpl::start_with_next([=](int height) {
 		_content->resize(_content->width(), height);
 	}, _field->lifetime());
 
 	_field->changes(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		Ui::PostponeCall(crl::guard(_field, [=] {
 			if (_hasCorrect) {
 				_correct->toggle(isGood(), anim::type::normal);
@@ -293,7 +292,7 @@ void Options::Option::createShadow() {
 	_shadow.reset(Ui::CreateChild<Ui::PlainShadow>(field().get()));
 	_shadow->show();
 	field()->sizeValue(
-	) | rpl::on_next([=](QSize size) {
+	) | rpl::start_with_next([=](QSize size) {
 		const auto left = st::createPollFieldPadding.left();
 		_shadow->setGeometry(
 			left,
@@ -322,7 +321,7 @@ void Options::Option::createRemove() {
 	_removeAlways = lifetime.make_state<rpl::variable<bool>>(false);
 
 	field->changes(
-	) | rpl::on_next([field, toggle] {
+	) | rpl::start_with_next([field, toggle] {
 		// Don't capture 'this'! Because Option is a value type.
 		*toggle = !field->getLastText().isEmpty();
 	}, field->lifetime());
@@ -331,13 +330,13 @@ void Options::Option::createRemove() {
 		toggle->value(),
 		_removeAlways->value(),
 		_1 || _2
-	) | rpl::on_next([=](bool shown) {
+	) | rpl::start_with_next([=](bool shown) {
 		remove->toggle(shown, anim::type::normal);
 	}, remove->lifetime());
 #endif
 
 	field->widthValue(
-	) | rpl::on_next([=](int width) {
+	) | rpl::start_with_next([=](int width) {
 		remove->moveToRight(
 			st::createPollOptionRemovePosition.x(),
 			st::createPollOptionRemovePosition.y(),
@@ -359,7 +358,7 @@ void Options::Option::createWarning() {
 	rpl::combine(
 		field->sizeValue(),
 		warning->sizeValue()
-	) | rpl::on_next([=](QSize size, QSize label) {
+	) | rpl::start_with_next([=](QSize size, QSize label) {
 		warning->moveToLeft(
 			(size.width()
 				- label.width()
@@ -431,7 +430,7 @@ void Options::Option::enableChooseCorrect(
 		button->entity()->height());
 	button->hide(anim::type::instant);
 	_content->sizeValue(
-	) | rpl::on_next([=](QSize size) {
+	) | rpl::start_with_next([=](QSize size) {
 		const auto left = st::createPollFieldPadding.left();
 		button->moveToLeft(
 			left,
@@ -511,8 +510,7 @@ Options::Options(
 }
 
 bool Options::full() const {
-	const auto limit = _controller->session().appConfig().pollOptionsLimit();
-	return (_list.size() >= limit);
+	return (_list.size() == kMaxOptionsCount);
 }
 
 bool Options::hasOptions() const {
@@ -688,19 +686,19 @@ void Options::addEmptyOption() {
 			QPoint(
 				-st::createPollOptionFieldPremium.textMargins.right(),
 				st::createPollOptionEmojiPositionSkip));
-		emojiToggle->shownValue() | rpl::on_next([=](bool shown) {
+		emojiToggle->shownValue() | rpl::start_with_next([=](bool shown) {
 			if (!shown) {
 				return;
 			}
 			_emojiPanelLifetime.destroy();
 			emojiPanel->selector()->emojiChosen(
-			) | rpl::on_next([=](ChatHelpers::EmojiChosen data) {
+			) | rpl::start_with_next([=](ChatHelpers::EmojiChosen data) {
 				if (field->hasFocus()) {
 					Ui::InsertEmojiAtCursor(field->textCursor(), data.emoji);
 				}
 			}, _emojiPanelLifetime);
 			emojiPanel->selector()->customEmojiChosen(
-			) | rpl::on_next([=](ChatHelpers::FileChosen data) {
+			) | rpl::start_with_next([=](ChatHelpers::FileChosen data) {
 				if (field->hasFocus()) {
 					Data::InsertCustomEmoji(field, data.document);
 				}
@@ -708,31 +706,30 @@ void Options::addEmptyOption() {
 		}, emojiToggle->lifetime());
 	}
 	field->submits(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		const auto index = findField(field);
 		if (_list[index]->isGood() && index + 1 < _list.size()) {
 			_list[index + 1]->setFocus();
 		}
 	}, field->lifetime());
 	field->changes(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		Ui::PostponeCall(crl::guard(field, [=] {
 			validateState();
 		}));
 	}, field->lifetime());
 	field->focusedChanges(
-	) | rpl::filter(rpl::mappers::_1) | rpl::on_next([=] {
+	) | rpl::filter(rpl::mappers::_1) | rpl::start_with_next([=] {
 		_scrollToWidget.fire_copy(field);
 	}, field->lifetime());
 	field->tabbed(
-	) | rpl::on_next([=](not_null<bool*> handled) {
+	) | rpl::start_with_next([=] {
 		const auto index = findField(field);
 		if (index + 1 < _list.size()) {
 			_list[index + 1]->setFocus();
 		} else {
 			_tabbed.fire({});
 		}
-		*handled = true;
 	}, field->lifetime());
 	base::install_event_filter(field, [=](not_null<QEvent*> event) {
 		if (event->type() != QEvent::KeyPress
@@ -754,7 +751,7 @@ void Options::addEmptyOption() {
 	});
 
 	_list.back()->removeClicks(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		Ui::PostponeCall(crl::guard(field, [=] {
 			Expects(!_list.empty());
 
@@ -864,6 +861,7 @@ not_null<Ui::InputField*> CreatePollBox::setupQuestion(
 	InitField(getDelegate()->outerContainer(), question, session);
 	question->setMaxLength(kQuestionLimit + kErrorLimit);
 	question->setSubmitSettings(Ui::InputField::SubmitSettings::Both);
+	question->customTab(true);
 
 	if (isPremium) {
 		using Selector = ChatHelpers::TabbedSelector;
@@ -891,13 +889,13 @@ not_null<Ui::InputField*> CreatePollBox::setupQuestion(
 			emojiPanel,
 			st::createPollOptionFieldPremiumEmojiPosition);
 		emojiPanel->selector()->emojiChosen(
-		) | rpl::on_next([=](ChatHelpers::EmojiChosen data) {
+		) | rpl::start_with_next([=](ChatHelpers::EmojiChosen data) {
 			if (question->hasFocus()) {
 				Ui::InsertEmojiAtCursor(question->textCursor(), data.emoji);
 			}
 		}, emojiToggle->lifetime());
 		emojiPanel->selector()->customEmojiChosen(
-		) | rpl::on_next([=](ChatHelpers::FileChosen data) {
+		) | rpl::start_with_next([=](ChatHelpers::FileChosen data) {
 			if (question->hasFocus()) {
 				Data::InsertCustomEmoji(question, data.document);
 			}
@@ -912,7 +910,7 @@ not_null<Ui::InputField*> CreatePollBox::setupQuestion(
 	rpl::combine(
 		question->geometryValue(),
 		warning->sizeValue()
-	) | rpl::on_next([=](QRect geometry, QSize label) {
+	) | rpl::start_with_next([=](QRect geometry, QSize label) {
 		warning->moveToLeft(
 			(container->width()
 				- label.width()
@@ -955,8 +953,7 @@ not_null<Ui::InputField*> CreatePollBox::setupSolution(
 	solution->setMaxLength(kSolutionLimit + kErrorLimit);
 	solution->setInstantReplaces(Ui::InstantReplaces::Default());
 	solution->setInstantReplacesEnabled(
-		Core::App().settings().replaceEmojiValue(),
-		Core::App().settings().systemTextReplaceValue());
+		Core::App().settings().replaceEmojiValue());
 	solution->setMarkdownReplacesEnabled(rpl::single(
 		Ui::MarkdownEnabledState{ Ui::MarkdownEnabled{ {
 			Ui::InputField::kTagBold,
@@ -969,6 +966,7 @@ not_null<Ui::InputField*> CreatePollBox::setupSolution(
 	));
 	solution->setEditLinkCallback(
 		DefaultEditLinkCallback(_controller->uiShow(), solution));
+	solution->customTab(true);
 
 	const auto warning = CreateWarningLabel(
 		inner,
@@ -978,7 +976,7 @@ not_null<Ui::InputField*> CreatePollBox::setupSolution(
 	rpl::combine(
 		solution->geometryValue(),
 		warning->sizeValue()
-	) | rpl::on_next([=](QRect geometry, QSize label) {
+	) | rpl::start_with_next([=](QRect geometry, QSize label) {
 		warning->moveToLeft(
 			(inner->width()
 				- label.width()
@@ -1030,10 +1028,8 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 		setCloseByEscape(!count);
 		setCloseByOutsideClick(!count);
 	}) | rpl::map([=](int count) {
-		const auto appConfig = &_controller->session().appConfig();
-		const auto max = appConfig->pollOptionsLimit();
-		return (count < max)
-			? tr::lng_polls_create_limit(tr::now, lt_count, max - count)
+		return (count < kMaxOptionsCount)
+			? tr::lng_polls_create_limit(tr::now, lt_count, kMaxOptionsCount - count)
 			: tr::lng_polls_create_maximum(tr::now);
 	}) | rpl::after_next([=] {
 		container->resizeToWidth(container->widthNoMargins());
@@ -1048,9 +1044,8 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 			st::createPollLimitPadding));
 
 	question->tabbed(
-	) | rpl::on_next([=](not_null<bool*> handled) {
+	) | rpl::start_with_next([=] {
 		options->focusFirst();
-		*handled = true;
 	}, question->lifetime());
 
 	Ui::AddSkip(container);
@@ -1089,7 +1084,7 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 		rpl::single(quiz->checked()) | rpl::then(quiz->checkedChanges()));
 
 	options->tabbed(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		if (quiz->checked()) {
 			solution->setFocus();
 		} else {
@@ -1098,9 +1093,8 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 	}, question->lifetime());
 
 	solution->tabbed(
-	) | rpl::on_next([=](not_null<bool*> handled) {
+	) | rpl::start_with_next([=] {
 		question->setFocus();
-		*handled = true;
 	}, solution->lifetime());
 
 	quiz->setDisabled(_disabled & PollData::Flag::Quiz);
@@ -1111,14 +1105,14 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 		) | rpl::filter([=](not_null<QEvent*> e) {
 			return (e->type() == QEvent::MouseButtonPress)
 				&& quiz->checked();
-		}) | rpl::on_next([show = uiShow()] {
+		}) | rpl::start_with_next([show = uiShow()] {
 			show->showToast(tr::lng_polls_create_one_answer(tr::now));
 		}, multiple->lifetime());
 	}
 
 	using namespace rpl::mappers;
 	quiz->checkedChanges(
-	) | rpl::on_next([=](bool checked) {
+	) | rpl::start_with_next([=](bool checked) {
 		if (multiple) {
 			if (checked && multiple->checked()) {
 				multiple->setChecked(false);
@@ -1134,7 +1128,7 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 		return !text.isEmpty() && (text.size() <= kQuestionLimit);
 	};
 	question->submits(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		if (isValidQuestion()) {
 			options->focusFirst();
 		}
@@ -1218,12 +1212,12 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 		crl::guard(this, send));
 
 	options->scrollToWidget(
-	) | rpl::on_next([=](not_null<QWidget*> widget) {
+	) | rpl::start_with_next([=](not_null<QWidget*> widget) {
 		scrollToWidget(widget);
 	}, lifetime());
 
 	options->backspaceInFront(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		FocusAtEnd(question);
 	}, lifetime());
 

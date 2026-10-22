@@ -14,8 +14,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/view/history_view_group_call_bar.h"
 #include "core/click_handler_types.h"
 #include "data/stickers/data_custom_emoji.h"
-#include "data/data_channel.h"
-#include "data/data_chat.h"
 #include "data/data_message_reactions.h"
 #include "data/data_peer.h"
 #include "data/data_user.h"
@@ -25,9 +23,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/text/text_custom_emoji.h"
 #include "ui/chat/chat_style.h"
 #include "ui/effects/reaction_fly_animation.h"
-#include "ui/effects/ripple_animation.h"
 #include "ui/painter.h"
-#include "ui/rect.h"
 #include "ui/power_saving.h"
 #include "styles/style_chat.h"
 #include "styles/style_chat_helpers.h"
@@ -43,37 +39,6 @@ constexpr auto kMaxNicePerRow = 5;
 [[nodiscard]] QColor AdaptChosenServiceFg(QColor serviceBg) {
 	serviceBg.setAlpha(std::max(serviceBg.alpha(), 192));
 	return serviceBg;
-}
-
-void PaintTagShape(QPainter &p, QSizeF size, const QColor &color) {
-	const auto arrow = st::reactionInlineTagArrow;
-	const auto rradius = st::reactionInlineTagRightRadius * 1.;
-	const auto radius = st::reactionInlineTagLeftRadius - rradius;
-	auto pen = QPen(color);
-	pen.setWidthF(rradius * 2.);
-	pen.setJoinStyle(Qt::RoundJoin);
-	const auto rect = QRectF(QPointF(), size).marginsRemoved(
-		{ rradius, rradius, rradius, rradius });
-	const auto right = rect.x() + rect.width();
-	const auto bottom = rect.y() + rect.height();
-	auto path = QPainterPath();
-	path.moveTo(rect.x() + radius, rect.y());
-	path.lineTo(right - arrow, rect.y());
-	path.lineTo(right, rect.y() + rect.height() / 2);
-	path.lineTo(right - arrow, bottom);
-	path.lineTo(rect.x() + radius, bottom);
-	path.arcTo(
-		QRectF(rect.x(), bottom - radius * 2, radius * 2, radius * 2),
-		270,
-		-90);
-	path.lineTo(rect.x(), rect.y() + radius);
-	path.arcTo(
-		QRectF(rect.x(), rect.y(), radius * 2, radius * 2),
-		180,
-		-90);
-	path.closeSubpath();
-	p.setPen(pen);
-	p.drawPath(path);
 }
 
 } // namespace
@@ -92,22 +57,6 @@ struct InlineList::Button {
 	bool chosen = false;
 	bool paid = false;
 	bool tag = false;
-};
-
-struct InlineList::RippleEffect : Ui::RippleAnimation {
-	RippleEffect(
-		const style::RippleAnimation &st,
-		QImage mask,
-		Fn<void()> update,
-		ReactionId buttonId,
-		int width)
-	: RippleAnimation(st, std::move(mask), std::move(update))
-	, buttonId(std::move(buttonId))
-	, width(width) {
-	}
-
-	ReactionId buttonId;
-	int width = 0;
 };
 
 InlineList::InlineList(
@@ -276,13 +225,8 @@ void InlineList::setButtonCount(Button &button, int count) {
 	button.userpics = nullptr;
 	button.count = count;
 	button.tag = false;
-	if (count == 0) {
-		button.text = QString();
-		button.textWidth = 0;
-	} else {
-		button.text = Lang::FormatCountToShort(count).string;
-		button.textWidth = st::semiboldFont->width(button.text);
-	}
+	button.text = Lang::FormatCountToShort(count).string;
+	button.textWidth = st::semiboldFont->width(button.text);
 }
 
 void InlineList::setButtonUserpics(
@@ -361,8 +305,6 @@ QSize InlineList::countOptimalSize() {
 				+ (button.textWidth ? st::reactionInlineSkip : 0))
 			: button.userpics
 			? (widthBaseUserpics + userpicsWidth(button))
-			: button.count == 0
-			? (rect::m::sum::h(padding) + size - st::reactionInlineEmptySkip)
 			: (widthBaseCount + button.textWidth);
 		button.geometry.setSize({ width, height });
 		x += width + between;
@@ -554,26 +496,6 @@ void InlineList::paint(
 			: (context.selected()
 				? st->historyFileInIconFgSelected()
 				: st->historyFileInIconFg());
-		if (_ripple && _ripple->buttonId == button.id) {
-			if (!bubbleReady || _ripple->width != geometry.width()) {
-				_ripple.reset();
-			} else {
-				const auto savedOpacity = p.opacity();
-				p.setOpacity(1.);
-				auto rippleColor = textFg.color();
-				rippleColor.setAlpha(25);
-				_ripple->paint(
-					p,
-					geometry.x(),
-					geometry.y(),
-					outerWidth,
-					&rippleColor);
-				if (_ripple->empty()) {
-					_ripple.reset();
-				}
-				p.setOpacity(savedOpacity);
-			}
-		}
 		const auto image = QRect(
 			inner.topLeft() + QPoint(skip, skip),
 			QSize(st::reactionInlineImage, st::reactionInlineImage));
@@ -671,21 +593,48 @@ QImage InlineList::PrepareTagBg(QColor tagBg, QColor dotBg) {
 	result.fill(Qt::transparent);
 	auto p = QPainter(&result);
 
+	auto path = QPainterPath();
+	const auto arrow = st::reactionInlineTagArrow;
+	const auto rradius = st::reactionInlineTagRightRadius * 1.;
+	const auto radius = st::reactionInlineTagLeftRadius - rradius;
+	auto pen = QPen(tagBg);
+	pen.setWidthF(rradius * 2.);
+	pen.setJoinStyle(Qt::RoundJoin);
+	const auto rect = QRectF(0, 0, width, height).marginsRemoved(
+		{ rradius, rradius, rradius, rradius });
+
+	const auto right = rect.x() + rect.width();
+	const auto bottom = rect.y() + rect.height();
+	path.moveTo(rect.x() + radius, rect.y());
+	path.lineTo(right - arrow, rect.y());
+	path.lineTo(right, rect.y() + rect.height() / 2);
+	path.lineTo(right - arrow, bottom);
+	path.lineTo(rect.x() + radius, bottom);
+	path.arcTo(
+		QRectF(rect.x(), bottom - radius * 2, radius * 2, radius * 2),
+		270,
+		-90);
+	path.lineTo(rect.x(), rect.y() + radius);
+	path.arcTo(
+		QRectF(rect.x(), rect.y(), radius * 2, radius * 2),
+		180,
+		-90);
+	path.closeSubpath();
+
+	const auto dsize = st::reactionInlineTagDot;
+	const auto dot = QRectF(
+		right - st::reactionInlineTagDotSkip - dsize,
+		rect.y() + (rect.height() - dsize) / 2.,
+		dsize,
+		dsize);
+
 	auto hq = PainterHighQualityEnabler(p);
 	p.setCompositionMode(QPainter::CompositionMode_Source);
+	p.setPen(pen);
 	p.setBrush(tagBg);
-	PaintTagShape(p, QSizeF(width, height), tagBg);
+	p.drawPath(path);
 
 	if (dotBg.alpha() > 0) {
-		const auto rradius = st::reactionInlineTagRightRadius * 1.;
-		const auto rect = QRectF(0, 0, width, height).marginsRemoved(
-			{ rradius, rradius, rradius, rradius });
-		const auto dsize = st::reactionInlineTagDot;
-		const auto dot = QRectF(
-			rect.x() + rect.width() - st::reactionInlineTagDotSkip - dsize,
-			rect.y() + (rect.height() - dsize) / 2.,
-			dsize,
-			dsize);
 		p.setPen(Qt::NoPen);
 		p.setBrush(dotBg);
 		p.drawEllipse(dot);
@@ -764,63 +713,11 @@ bool InlineList::getState(
 					QVariant::fromValue(button.id));
 				_owner->preloadAnimationsFor(button.id);
 			}
-			_lastPoint = point - button.geometry.topLeft();
-			_lastPointButton = button.id;
 			outResult->link = button.link;
 			return true;
 		}
 	}
 	return false;
-}
-
-void InlineList::clickHandlerPressedChanged(
-		const ClickHandlerPtr &handler,
-		bool pressed,
-		Fn<void()> repaint) {
-	if (pressed) {
-		const auto id = ReactionIdOfLink(handler);
-		if (id.empty()) {
-			return;
-		}
-		const auto i = ranges::find(_buttons, id, &Button::id);
-		if (i == end(_buttons)) {
-			return;
-		}
-		const auto &geometry = i->geometry;
-		if (!_ripple
-			|| _ripple->buttonId != id
-			|| _ripple->width != geometry.width()) {
-			const auto mask = [&] {
-				if (areTags()) {
-					const auto s = geometry.size();
-					return Ui::RippleAnimation::MaskByDrawer(
-						s,
-						false,
-						[&](QPainter &p) {
-							PaintTagShape(
-								p,
-								QSizeF(s.width(), s.height()),
-								QColor(255, 255, 255));
-						});
-				}
-				return Ui::RippleAnimation::RoundRectMask(
-					geometry.size(),
-					geometry.height() / 2);
-			}();
-			_ripple = std::make_unique<RippleEffect>(
-				st::defaultRippleAnimation,
-				std::move(mask),
-				std::move(repaint),
-				id,
-				geometry.width());
-		}
-		const auto point = (_lastPointButton == id)
-			? _lastPoint
-			: QPoint(geometry.width() / 2, geometry.height() / 2);
-		_ripple->add(point);
-	} else if (_ripple) {
-		_ripple->lastStop();
-	}
 }
 
 void InlineList::animate(
@@ -931,33 +828,6 @@ InlineListData InlineListDataFromMessage(not_null<Element*> view) {
 	const auto item = view->data();
 	auto result = InlineListData();
 	result.reactions = item->reactionsWithLocal();
-
-	const auto shouldAddEmptyPaidButton = [&] {
-		if (view->context() == Context::ChatPreview) {
-			return false;
-		}
-		if (result.reactions.empty()) {
-			return false;
-		}
-		const auto hasPaidReaction = ranges::any_of(
-			result.reactions,
-			[](const MessageReaction &r) { return r.id.paid(); });
-		if (hasPaidReaction) {
-			return false;
-		}
-		if (const auto channel = item->history()->peer->asChannel()) {
-			return channel->allowedReactions().paidEnabled;
-		} else if (const auto chat = item->history()->peer->asChat()) {
-			return chat->allowedReactions().paidEnabled;
-		}
-		return false;
-	}();
-
-	if (shouldAddEmptyPaidButton) {
-		result.reactions.insert(
-			result.reactions.begin(),
-			MessageReaction{ .id = ReactionId::Paid(), .count = 0 });
-	}
 	if (const auto user = item->history()->peer->asUser()) {
 		// Always show userpics, we have all information.
 		result.recent.reserve(result.reactions.size());

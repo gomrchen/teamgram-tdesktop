@@ -24,6 +24,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/vertical_list.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/fields/number_input.h"
+#include "ui/widgets/label_with_custom_emoji.h"
 #include "ui/widgets/labels.h"
 #include "ui/wrap/slide_wrap.h"
 #include "ui/wrap/vertical_layout.h"
@@ -74,7 +75,7 @@ InviteLinkSubscriptionToggle FillCreateInviteLinkSubscriptionToggle(
 		tr::lng_group_invite_subscription_ph(),
 		QString(),
 		std::pow(QString::number(maxCredits).size(), 10));
-	wrap->toggledValue() | rpl::on_next([=](bool shown) {
+	wrap->toggledValue() | rpl::start_with_next([=](bool shown) {
 		if (shown) {
 			input->setFocus();
 		}
@@ -85,7 +86,7 @@ InviteLinkSubscriptionToggle FillCreateInviteLinkSubscriptionToggle(
 	const auto priceOverlay = Ui::CreateChild<Ui::RpWidget>(inputContainer);
 	priceOverlay->setAttribute(Qt::WA_TransparentForMouseEvents);
 	inputContainer->sizeValue(
-	) | rpl::on_next([=](const QSize &size) {
+	) | rpl::start_with_next([=](const QSize &size) {
 		input->resize(
 			size.width() - rect::m::sum::h(st::boxRowPadding),
 			st.heightMin);
@@ -104,7 +105,7 @@ InviteLinkSubscriptionToggle FillCreateInviteLinkSubscriptionToggle(
 		priceOverlay->update();
 	});
 	priceOverlay->paintRequest(
-	) | rpl::on_next([=, right = st::boxRowPadding.right()] {
+	) | rpl::start_with_next([=, right = st::boxRowPadding.right()] {
 		if (state->usdRate.current() <= 0) {
 			return;
 		}
@@ -128,27 +129,29 @@ InviteLinkSubscriptionToggle FillCreateInviteLinkSubscriptionToggle(
 
 	state->usdRate = peer->session().credits().rateValue(peer);
 
-	auto about = object_ptr<Ui::FlatLabel>(
+	auto about = Ui::CreateLabelWithCustomEmoji(
 		container,
 		tr::lng_group_invite_subscription_about(
 			lt_link,
 			tr::lng_group_invite_subscription_about_link(
 				lt_emoji,
 				rpl::single(Ui::Text::IconEmoji(&st::textMoreIconEmoji)),
-				tr::rich
+				Ui::Text::RichLangValue
 			) | rpl::map([](TextWithEntities text) {
-				return tr::link(
+				return Ui::Text::Link(
 					std::move(text),
 					tr::lng_group_invite_subscription_about_url(tr::now));
 			}),
-			tr::rich),
+			Ui::Text::RichLangValue),
+		Core::TextContext({ .session = &peer->session() }),
 		st::boxDividerLabel);
 	Ui::AddSkip(wrap->entity());
 	Ui::AddSkip(wrap->entity());
 	container->add(object_ptr<Ui::DividerLabel>(
 		container,
 		std::move(about),
-		st::defaultBoxDividerLabelPadding));
+		st::defaultBoxDividerLabelPadding,
+		RectPart::Top | RectPart::Bottom));
 	return { toggle, input };
 }
 

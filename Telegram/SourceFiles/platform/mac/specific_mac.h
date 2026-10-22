@@ -10,6 +10,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "platform/platform_specific.h"
 #include "platform/mac/specific_mac_p.h"
 
+namespace Data {
+class LocationPoint;
+} // namespace Data
+
 namespace Platform {
 
 inline bool AutostartSupported() {
@@ -68,3 +72,5 @@ int psFixPrevious();
 void psDownloadPathEnableAccess();
 QByteArray psDownloadPathBookmark(const QString &path);
 QByteArray psPathBookmark(const QString &path);
+
+bool psLaunchMaps(const Data::LocationPoint &point);

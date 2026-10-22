@@ -36,7 +36,7 @@ MessagesSearchMerged::MessagesSearchMerged(not_null<History*> history)
 	};
 
 	_apiSearch.messagesFounds(
-	) | rpl::on_next([=](const FoundMessages &data) {
+	) | rpl::start_with_next([=](const FoundMessages &data) {
 		if (data.nextToken == _concatedFound.nextToken) {
 			addFound(data);
 			checkFull(data);
@@ -50,7 +50,7 @@ MessagesSearchMerged::MessagesSearchMerged(not_null<History*> history)
 
 	if (_migratedSearch) {
 		_migratedSearch->messagesFounds(
-		) | rpl::on_next([=](const FoundMessages &data) {
+		) | rpl::start_with_next([=](const FoundMessages &data) {
 			if (_isFull) {
 				addFound(data);
 			}
@@ -66,8 +66,6 @@ MessagesSearchMerged::MessagesSearchMerged(not_null<History*> history)
 
 void MessagesSearchMerged::disableMigrated() {
 	_migratedSearch = std::nullopt;
-	_waitingForTotal = false;
-	_isFull = false;
 }
 
 void MessagesSearchMerged::addFound(const FoundMessages &data) {
@@ -87,15 +85,12 @@ const MessagesSearch::Request &MessagesSearchMerged::request() const {
 void MessagesSearchMerged::clear() {
 	_concatedFound = {};
 	_migratedFirstFound = {};
-	_waitingForTotal = false;
-	_isFull = false;
 }
 
 void MessagesSearchMerged::search(const Request &search) {
 	_request = search;
-	_isFull = false;
-	_waitingForTotal = (_migratedSearch != std::nullopt);
 	if (_migratedSearch) {
+		_waitingForTotal = true;
 		_migratedSearch->searchMessages(search);
 	}
 	_apiSearch.searchMessages(search);

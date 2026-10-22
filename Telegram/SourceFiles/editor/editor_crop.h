@@ -8,7 +8,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #pragma once
 
 #include "ui/rp_widget.h"
-#include "ui/effects/animations.h"
 
 #include "base/flat_map.h"
 #include "editor/photo_editor_common.h"
@@ -52,10 +51,7 @@ private:
 		} borders;
 	};
 
-	void paintFrame(QPainter &p);
-	void paintGrid(QPainter &p, float64 opacity);
-	void setGridVisible(bool visible, bool animated);
-	[[nodiscard]] QPainterPath cropPath() const;
+	void paintPoints(QPainter &p);
 
 	void updateEdges();
 	[[nodiscard]] QPoint pointOfEdge(Qt::Edges e) const;
@@ -90,11 +86,9 @@ private:
 	QPainterPath _painterPath;
 
 	InfoAtDown _down;
-	Ui::Animations::Simple _gridOpacityAnimation;
 
 	int _angle = 0;
 	bool _flipped = false;
-	bool _gridVisible = false;
 
 	bool _keepAspectRatio = false;
 

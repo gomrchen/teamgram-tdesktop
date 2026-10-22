@@ -460,13 +460,9 @@ QByteArray Parser::block(const MTPDpageBlockList &data) {
 
 QByteArray Parser::block(const MTPDpageBlockBlockquote &data) {
 	const auto caption = rich(data.vcaption());
-	const auto cite = [&] {
-		if (caption.isEmpty()) {
-			return QByteArray();
-		} else {
-			return tag("cite", { { "dir", "auto" } }, caption);
-		}
-	}();
+	const auto cite = caption.isEmpty()
+		? QByteArray()
+		: tag("cite", { { "dir", "auto" } }, caption);
 	return tag("blockquote", {
 		{ "dir", "auto" }
 	}, rich(data.vtext()) + cite);
@@ -474,13 +470,9 @@ QByteArray Parser::block(const MTPDpageBlockBlockquote &data) {
 
 QByteArray Parser::block(const MTPDpageBlockPullquote &data) {
 	const auto caption = rich(data.vcaption());
-	const auto cite = [&] {
-		if (caption.isEmpty()) {
-			return QByteArray();
-		} else {
-			return tag("cite", { { "dir", "auto" } }, caption);
-		}
-	}();
+	const auto cite = caption.isEmpty()
+		? QByteArray()
+		: tag("cite", { { "dir", "auto" } }, caption);
 	return tag("div", {
 		{ "class", "pullquote" },
 		{ "dir", "auto" },
@@ -1092,14 +1084,12 @@ QByteArray Parser::rich(const MTPRichText &text) {
 	}, [&](const MTPDtextAnchor &data) {
 		const auto inner = rich(data.vtext());
 		const auto name = utf(data.vname());
-		if (inner.isEmpty()) {
-			return tag("a", { { "name", name } });
-		} else {
-			return tag(
+		return inner.isEmpty()
+			? tag("a", { { "name", name } })
+			: tag(
 				"span",
 				{ { "class", "reference" } },
 				tag("a", { { "name", name } }) + inner);
-		}
 	});
 }
 

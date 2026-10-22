@@ -147,7 +147,8 @@ void ShowReportMessageBox(
 							auto label = object_ptr<Ui::FlatLabel>(
 								container,
 								tr::lng_report_details_message_about(),
-								st->divider.label);
+								st::boxDividerLabel);
+							label->setTextColorOverride(st->dividerFg->c);
 							using namespace Ui;
 							const auto widget = container->add(
 								object_ptr<PaddingWrap<>>(
@@ -158,11 +159,11 @@ void ShowReportMessageBox(
 								= CreateChild<BoxContentDivider>(
 									widget,
 									st::boxDividerHeight,
-									st->divider.bar,
+									st->dividerBg,
 									RectPart::Top | RectPart::Bottom);
 							background->lower();
 							widget->sizeValue(
-							) | rpl::on_next([=](const QSize &s) {
+							) | rpl::start_with_next([=](const QSize &s) {
 								background->resize(s);
 							}, background->lifetime());
 						}
@@ -183,7 +184,7 @@ void ShowReportMessageBox(
 							repeatRequest(repeatRequest, std::move(copy));
 						};
 						details->submits(
-						) | rpl::on_next(submit, details->lifetime());
+						) | rpl::start_with_next(submit, details->lifetime());
 						box->addButton(tr::lng_report_button(), submit);
 					} else {
 						box->addButton(

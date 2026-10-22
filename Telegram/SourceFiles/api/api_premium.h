@@ -30,11 +30,11 @@ struct GiftCode {
 	MsgId giveawayId = 0;
 	TimeId date = 0;
 	TimeId used = 0; // 0 if not used.
-	int days = 0;
+	int months = 0;
 	bool giveaway = false;
 
 	explicit operator bool() const {
-		return days != 0;
+		return months != 0;
 	}
 
 	friend inline bool operator==(
@@ -180,8 +180,7 @@ public:
 
 	[[nodiscard]] rpl::producer<rpl::no_value, QString> request();
 	[[nodiscard]] std::vector<GiftOptionData> optionsForPeer() const;
-	[[nodiscard]] Data::PremiumSubscriptionOptions optionsForGiveaway(
-			int usersCount);
+	[[nodiscard]] Data::PremiumSubscriptionOptions options(int amount);
 	[[nodiscard]] const std::vector<int> &availablePresets() const;
 	[[nodiscard]] int monthsFromPreset(int monthsIndex);
 	[[nodiscard]] Payments::InvoicePremiumGiftCode invoice(

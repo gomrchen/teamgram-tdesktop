@@ -218,7 +218,7 @@ UnwrappedMedia::SurroundingInfo UnwrappedMedia::surroundingInfo(
 		panelHeight += reply->height()
 			- ((forwarded || via) ? 0 : replyMargins.top())
 			- replyMargins.bottom();
-	} else if (panelHeight) {
+	} else {
 		panelHeight += st::msgReplyPadding.bottom();
 	}
 	const auto total = (topicSize.isEmpty() ? 0 : topicSize.height())
@@ -580,10 +580,7 @@ QPoint UnwrappedMedia::resolveCustomInfoRightBottom() const {
 	const auto fullRight = calculateFullRight(inner);
 	const auto skipx = st::msgDateImgPadding.x();
 	const auto skipy = st::msgDateImgPadding.y();
-	const auto infoWidth = _parent->infoWidth()
-		+ st::msgDateImgPadding.x() * 2
-		+ st::msgReplyPadding.left();
-	return QPoint(fullRight - skipx - infoWidth, fullBottom - skipy);
+	return QPoint(fullRight - skipx, fullBottom - skipy);
 }
 
 std::unique_ptr<StickerPlayer> UnwrappedMedia::stickerTakePlayer(
@@ -667,7 +664,7 @@ int UnwrappedMedia::additionalWidth(
 		accumulate_max(result, 2 * st::msgReplyPadding.left() + via->maxWidth + st::msgReplyPadding.right());
 	}
 	if (reply) {
-		accumulate_max(result, st::msgReplyPadding.left() + reply->maxWidth());
+		accumulate_max(result, reply->maxWidth());
 	}
 	return result;
 }

@@ -19,7 +19,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/file_utilities.h"
 #include "core/mime_type.h"
 #include "data/business/data_shortcut_messages.h"
-#include "data/data_chat_participant_status.h"
 #include "data/data_message_reaction_id.h"
 #include "data/data_premium_limits.h"
 #include "data/data_session.h"
@@ -59,7 +58,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/painter.h"
 #include "window/themes/window_theme.h"
 #include "window/section_widget.h"
-#include "window/window_peer_menu.h"
 #include "window/window_session_controller.h"
 #include "styles/style_boxes.h"
 #include "styles/style_chat_helpers.h"
@@ -179,7 +177,7 @@ private:
 	bool cornerButtonsUnreadMayBeShown() override;
 	bool cornerButtonsHas(CornerButtonType type) override;
 
-	base::weak_qptr<Ui::RpWidget> createPinnedToBottom(
+	QPointer<Ui::RpWidget> createPinnedToBottom(
 		not_null<Ui::RpWidget*> parent) override;
 	void setupComposeControls();
 	void processScroll();
@@ -196,6 +194,9 @@ private:
 		std::optional<bool> overrideSendImagesAsPhotos = std::nullopt,
 		const QString &insertTextOnCancel = QString());
 	bool confirmSendingFiles(
+		const QStringList &files,
+		const QString &insertTextOnCancel);
+	bool confirmSendingFiles(
 		Ui::PreparedList &&list,
 		const QString &insertTextOnCancel = QString());
 	bool confirmSendingFiles(
@@ -203,11 +204,15 @@ private:
 		std::optional<bool> overrideSendImagesAsPhotos,
 		const QString &insertTextOnCancel = QString());
 	bool showSendingFilesError(const Ui::PreparedList &list) const;
-	bool showSendingFilesError(const Ui::PreparedBundle &bundle) const;
-
+	bool showSendingFilesError(
+		const Ui::PreparedList &list,
+		std::optional<bool> compress) const;
 	void sendingFilesConfirmed(
-		std::shared_ptr<Ui::PreparedBundle> bundle,
-		Api::SendOptions options);
+		Ui::PreparedList &&list,
+		Ui::SendFilesWay way,
+		TextWithTags &&caption,
+		Api::SendOptions options,
+		bool ctrlShiftEnter);
 
 	bool sendExistingDocument(
 		not_null<DocumentData*> document,
@@ -324,7 +329,7 @@ ShortcutMessages::ShortcutMessages(
 	not_null<Ui::ScrollArea*> scroll,
 	rpl::producer<Container> containerValue,
 	BusinessShortcutId shortcutId)
-: AbstractSection(parent, controller)
+: AbstractSection(parent)
 , WindowListDelegate(controller)
 , _controller(controller)
 , _session(&controller->session())
@@ -341,7 +346,7 @@ ShortcutMessages::ShortcutMessages(
 	const auto messages = &_session->data().shortcutMessages();
 
 	messages->shortcutIdChanged(
-	) | rpl::on_next([=](Data::ShortcutIdChange change) {
+	) | rpl::start_with_next([=](Data::ShortcutIdChange change) {
 		if (change.oldId == _shortcutId.current()) {
 			if (change.newId) {
 				_shortcutId = change.newId;
@@ -351,12 +356,12 @@ ShortcutMessages::ShortcutMessages(
 		}
 	}, lifetime());
 	messages->shortcutsChanged(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		_shortcut = messages->lookupShortcut(_shortcutId.current()).name;
 	}, lifetime());
 
 	controller->chatStyle()->paletteChanged(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		_scroll->updateBars();
 	}, _scroll->lifetime());
 
@@ -368,39 +373,37 @@ ShortcutMessages::ShortcutMessages(
 		this,
 		&controller->session(),
 		static_cast<ListDelegate*>(this));
-	_inner->overrideChatMode(ElementChatMode::Default);
+	_inner->overrideIsChatWide(false);
 
 	_scroll->sizeValue() | rpl::filter([](QSize size) {
 		return !size.isEmpty();
-	}) | rpl::on_next([=] {
+	}) | rpl::start_with_next([=] {
 		outerResized();
 	}, lifetime());
 
 	_scroll->scrolls(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		processScroll();
 	}, lifetime());
 
-	_shortcut.value() | rpl::on_next([=] {
+	_shortcut.value() | rpl::start_with_next([=] {
 		refreshEmptyText();
 		_inner->update();
 	}, lifetime());
 
 	_inner->editMessageRequested(
-	) | rpl::on_next([=](auto fullId) {
+	) | rpl::start_with_next([=](auto fullId) {
 		if (const auto item = _session->data().message(fullId)) {
 			const auto media = item->media();
 			if (!media || media->webpage() || media->allowsEditCaption()) {
 				_composeControls->editMessage(
 					fullId,
 					_inner->getSelectedTextRange(item));
-			} else if (media->todolist()) {
-				Window::PeerMenuEditTodoList(_controller, item);
 			}
 		}
 	}, _inner->lifetime());
 
-	_inner->heightValue() | rpl::on_next([=](int height) {
+	_inner->heightValue() | rpl::start_with_next([=](int height) {
 		resize(width(), height);
 	}, lifetime());
 }
@@ -414,21 +417,21 @@ void ShortcutMessages::refreshEmptyText() {
 	auto text = away
 		? tr::lng_away_empty_title(
 			tr::now,
-			tr::bold
+			Ui::Text::Bold
 		).append("\n\n").append(tr::lng_away_empty_about(tr::now))
 		: greeting
 		? tr::lng_greeting_empty_title(
 			tr::now,
-			tr::bold
+			Ui::Text::Bold
 		).append("\n\n").append(tr::lng_greeting_empty_about(tr::now))
 		: tr::lng_replies_empty_title(
 			tr::now,
-			tr::bold
+			Ui::Text::Bold
 		).append("\n\n").append(tr::lng_replies_empty_about(
 			tr::now,
 			lt_shortcut,
-			tr::bold('/' + shortcut),
-			tr::marked));
+			Ui::Text::Bold('/' + shortcut),
+			Ui::Text::WithEntities));
 	_emptyIcon = away
 		? &st::awayEmptyIcon
 		: greeting
@@ -618,7 +621,7 @@ void ShortcutMessages::updateComposeControlsPosition() {
 }
 
 void ShortcutMessages::setupComposeControls() {
-	_shortcutId.value() | rpl::on_next([=](BusinessShortcutId id) {
+	_shortcutId.value() | rpl::start_with_next([=](BusinessShortcutId id) {
 		_composeControls->updateShortcutId(id);
 	}, lifetime());
 
@@ -626,7 +629,6 @@ void ShortcutMessages::setupComposeControls() {
 		.key = Dialogs::Key{ _history },
 		.section = Dialogs::EntryState::Section::ShortcutMessages,
 		.currentReplyTo = replyTo(),
-		.currentSuggest = SuggestOptions(),
 	};
 	_composeControls->setCurrentDialogsEntryState(state);
 
@@ -649,28 +651,28 @@ void ShortcutMessages::setupComposeControls() {
 	});
 
 	_composeControls->cancelRequests(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		listCancelRequest();
 	}, lifetime());
 
 	_composeControls->sendRequests(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		send();
 	}, lifetime());
 
 	_composeControls->sendVoiceRequests(
-	) | rpl::on_next([=](ComposeControls::VoiceToSend &&data) {
+	) | rpl::start_with_next([=](ComposeControls::VoiceToSend &&data) {
 		sendVoice(std::move(data));
 	}, lifetime());
 
 	_composeControls->sendCommandRequests(
-	) | rpl::on_next([=](const QString &command) {
+	) | rpl::start_with_next([=](const QString &command) {
 		listSendBotCommand(command, FullMsgId());
 	}, lifetime());
 
 	const auto saveEditMsgRequestId = lifetime().make_state<mtpRequestId>(0);
 	_composeControls->editRequests(
-	) | rpl::on_next([=](auto data) {
+	) | rpl::start_with_next([=](auto data) {
 		if (const auto item = _session->data().message(data.fullId)) {
 			if (item->isBusinessShortcut()) {
 				const auto spoiler = data.spoilered;
@@ -682,7 +684,7 @@ void ShortcutMessages::setupComposeControls() {
 	_composeControls->attachRequests(
 	) | rpl::filter([=] {
 		return !_choosingAttach;
-	}) | rpl::on_next([=](std::optional<bool> overrideCompress) {
+	}) | rpl::start_with_next([=](std::optional<bool> overrideCompress) {
 		_choosingAttach = true;
 		base::call_delayed(st::historyAttach.ripple.hideDuration, this, [=] {
 			_choosingAttach = false;
@@ -691,23 +693,23 @@ void ShortcutMessages::setupComposeControls() {
 	}, lifetime());
 
 	_composeControls->fileChosen(
-	) | rpl::on_next([=](ChatHelpers::FileChosen data) {
+	) | rpl::start_with_next([=](ChatHelpers::FileChosen data) {
 		_controller->hideLayer(anim::type::normal);
 		sendExistingDocument(data.document, {}, std::nullopt);
 	}, lifetime());
 
 	_composeControls->photoChosen(
-	) | rpl::on_next([=](ChatHelpers::PhotoChosen chosen) {
+	) | rpl::start_with_next([=](ChatHelpers::PhotoChosen chosen) {
 		sendExistingPhoto(chosen.photo);
 	}, lifetime());
 
 	_composeControls->inlineResultChosen(
-	) | rpl::on_next([=](ChatHelpers::InlineChosen chosen) {
+	) | rpl::start_with_next([=](ChatHelpers::InlineChosen chosen) {
 		sendInlineResult(chosen.result, chosen.bot);
 	}, lifetime());
 
 	_composeControls->jumpToItemRequests(
-	) | rpl::on_next([=](FullReplyTo to) {
+	) | rpl::start_with_next([=](FullReplyTo to) {
 		if (const auto item = _session->data().message(to.messageId)) {
 			showAtPosition(item->position());
 		}
@@ -716,12 +718,12 @@ void ShortcutMessages::setupComposeControls() {
 	rpl::merge(
 		_composeControls->scrollKeyEvents(),
 		_inner->scrollKeyEvents()
-	) | rpl::on_next([=](not_null<QKeyEvent*> e) {
+	) | rpl::start_with_next([=](not_null<QKeyEvent*> e) {
 		_scroll->keyPressEvent(e);
 	}, lifetime());
 
 	_composeControls->editLastMessageRequests(
-	) | rpl::on_next([=](not_null<QKeyEvent*> e) {
+	) | rpl::start_with_next([=](not_null<QKeyEvent*> e) {
 		if (!_inner->lastMessageEditRequestNotify()) {
 			_scroll->keyPressEvent(e);
 		}
@@ -742,22 +744,22 @@ void ShortcutMessages::setupComposeControls() {
 	});
 
 	_composeControls->lockShowStarts(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		_cornerButtons.updateJumpDownVisibility();
 		_cornerButtons.updateUnreadThingsVisibility();
 	}, lifetime());
 
 	_composeControls->viewportEvents(
-	) | rpl::on_next([=](not_null<QEvent*> e) {
+	) | rpl::start_with_next([=](not_null<QEvent*> e) {
 		_scroll->viewportEvent(e);
 	}, lifetime());
 
-	_controlsWrap->widthValue() | rpl::on_next([=](int width) {
+	_controlsWrap->widthValue() | rpl::start_with_next([=](int width) {
 		_composeControls->resizeToWidth(width);
 	}, _controlsWrap->lifetime());
 
 	_composeControls->height(
-	) | rpl::on_next([=](int height) {
+	) | rpl::start_with_next([=](int height) {
 		const auto wasMax = (_scroll->scrollTopMax() == _scroll->scrollTop());
 		_controlsWrap->resize(width(), height - st::boxRadius);
 		updateComposeControlsPosition();
@@ -767,7 +769,7 @@ void ShortcutMessages::setupComposeControls() {
 	}, lifetime());
 }
 
-base::weak_qptr<Ui::RpWidget> ShortcutMessages::createPinnedToBottom(
+QPointer<Ui::RpWidget> ShortcutMessages::createPinnedToBottom(
 		not_null<Ui::RpWidget*> parent) {
 	auto placeholder = rpl::deferred([=] {
 		return _shortcutId.value();
@@ -1137,21 +1139,40 @@ void ShortcutMessages::uploadFile(
 
 bool ShortcutMessages::showSendingFilesError(
 		const Ui::PreparedList &list) const {
-	if (showPremiumRequired()) {
-		return true;
-	}
-	const auto show = _controller->uiShow();
-	const auto peer = _controller->session().user();
-	return Data::ShowSendError(show, peer, list, std::nullopt, true);
+	return showSendingFilesError(list, std::nullopt);
 }
 
 bool ShortcutMessages::showSendingFilesError(
-		const Ui::PreparedBundle &bundle) const {
+		const Ui::PreparedList &list,
+		std::optional<bool> compress) const {
 	if (showPremiumRequired()) {
 		return true;
 	}
-	const auto peer = _controller->session().user();
-	return Data::ShowSendError(_controller->uiShow(), peer, bundle, true);
+	const auto text = [&] {
+		using Error = Ui::PreparedList::Error;
+		switch (list.error) {
+		case Error::None: return QString();
+		case Error::EmptyFile:
+		case Error::Directory:
+		case Error::NonLocalUrl: return tr::lng_send_image_empty(
+			tr::now,
+			lt_name,
+			list.errorData);
+		case Error::TooLargeFile: return u"(toolarge)"_q;
+		}
+		return tr::lng_forward_send_files_cant(tr::now);
+	}();
+	if (text.isEmpty()) {
+		return false;
+	} else if (text == u"(toolarge)"_q) {
+		const auto fileSize = list.files.back().size;
+		_controller->show(
+			Box(FileSizeLimitBox, _session, fileSize, nullptr));
+		return true;
+	}
+
+	_controller->showToast(text);
+	return true;
 }
 
 Api::SendAction ShortcutMessages::prepareSendAction(
@@ -1335,15 +1356,20 @@ bool ShortcutMessages::confirmSendingFiles(
 		SendMenu::Details());
 
 	box->setConfirmedCallback(crl::guard(this, [=](
-			std::shared_ptr<Ui::PreparedBundle> bundle,
-			Api::SendOptions options) {
-		sendingFilesConfirmed(std::move(bundle), options);
+			Ui::PreparedList &&list,
+			Ui::SendFilesWay way,
+			TextWithTags &&caption,
+			Api::SendOptions options,
+			bool ctrlShiftEnter) {
+		sendingFilesConfirmed(
+			std::move(list),
+			way,
+			std::move(caption),
+			options,
+			ctrlShiftEnter);
 	}));
 	box->setCancelledCallback(_composeControls->restoreTextCallback(
 		insertTextOnCancel));
-	box->takeTextWithTagsRequests() | rpl::on_next([=](TextWithTags &&text) {
-		_composeControls->setText(std::move(text));
-	}, box->lifetime());
 
 	//ActivateWindow(_controller);
 	_controller->show(std::move(box));
@@ -1369,21 +1395,41 @@ bool ShortcutMessages::confirmSendingFiles(
 }
 
 void ShortcutMessages::sendingFilesConfirmed(
-		std::shared_ptr<Ui::PreparedBundle> bundle,
-		Api::SendOptions options) {
-	if (showSendingFilesError(*bundle)) {
+		Ui::PreparedList &&list,
+		Ui::SendFilesWay way,
+		TextWithTags &&caption,
+		Api::SendOptions options,
+		bool ctrlShiftEnter) {
+	Expects(list.filesToProcess.empty());
+
+	if (showSendingFilesError(list, way.sendImagesAsPhotos())) {
 		return;
 	}
-	const auto compress = bundle->way.sendImagesAsPhotos();
-	const auto type = compress ? SendMediaType::Photo : SendMediaType::File;
+	auto groups = DivideByGroups(
+		std::move(list),
+		way,
+		_history->peer->slowmodeApplied());
+	const auto type = way.sendImagesAsPhotos()
+		? SendMediaType::Photo
+		: SendMediaType::File;
 	auto action = prepareSendAction(options);
 	action.clearDraft = false;
-	auto &api = _session->api();
-	for (auto &group : bundle->groups) {
+	if ((groups.size() != 1 || !groups.front().sentWithCaption())
+		&& !caption.text.isEmpty()) {
+		auto message = Api::MessageToSend(action);
+		message.textWithTags = base::take(caption);
+		_session->api().sendMessage(std::move(message));
+	}
+	for (auto &group : groups) {
 		const auto album = (group.type != Ui::AlbumType::None)
 			? std::make_shared<SendingAlbum>()
 			: nullptr;
-		api.sendFiles(std::move(group.list), type, album, action);
+		_session->api().sendFiles(
+			std::move(group.list),
+			type,
+			base::take(caption),
+			album,
+			action);
 	}
 	if (_composeControls->replyingToMessage() == action.replyTo) {
 		_composeControls->cancelReplyMessage();

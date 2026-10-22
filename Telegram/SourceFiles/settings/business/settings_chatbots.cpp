@@ -18,7 +18,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "lang/lang_keys.h"
 #include "main/main_session.h"
 #include "settings/business/settings_recipients_helper.h"
-#include "ui/boxes/confirm_box.h"
 #include "ui/effects/ripple_animation.h"
 #include "ui/text/text_utilities.h"
 #include "ui/widgets/fields/input_field.h"
@@ -50,10 +49,25 @@ struct BotState {
 };
 
 [[nodiscard]] constexpr Data::ChatbotsPermissions Defaults() {
-	return Data::ChatbotsPermission::ViewMessages;
+	using Flag = Data::ChatbotsPermission;
+	return Flag::ViewMessages
+		| Flag::ReplyToMessages
+		| Flag::MarkAsRead
+		| Flag::DeleteSent
+		| Flag::DeleteReceived
+		| Flag::EditName
+		| Flag::EditBio
+		| Flag::EditUserpic
+		| Flag::EditUsername
+		| Flag::ViewGifts
+		| Flag::SellGifts
+		| Flag::GiftSettings
+		| Flag::TransferGifts
+		| Flag::TransferStars
+		| Flag::ManageStories;
 }
 
-class Chatbots final : public Section<Chatbots> {
+class Chatbots final : public BusinessSection<Chatbots> {
 public:
 	Chatbots(
 		QWidget *parent,
@@ -64,17 +78,14 @@ public:
 	[[nodiscard]] rpl::producer<QString> title() override;
 
 	const Ui::RoundRect *bottomSkipRounding() const override {
-		return _detailsWrap->count() ? nullptr : &_bottomSkipRounding;
+		return &_bottomSkipRounding;
 	}
 
 private:
-	void setupContent();
-	void refreshDetails();
+	void setupContent(not_null<Window::SessionController*> controller);
 	void save();
 
 	Ui::RoundRect _bottomSkipRounding;
-
-	Ui::VerticalLayout *_detailsWrap = nullptr;
 
 	rpl::variable<Data::BusinessRecipients> _recipients;
 	rpl::variable<QString> _usernameValue;
@@ -217,7 +228,7 @@ Main::Session &PreviewController::session() const {
 		state->timer.setCallback(push);
 		state->lastText = field->getLastText();
 		consumer.put_next_copy(field->getLastText());
-		field->changes() | rpl::on_next([=] {
+		field->changes() | rpl::start_with_next([=] {
 			const auto &text = field->getLastText();
 			const auto was = std::exchange(state->lastText, text);
 			if (std::abs(int(text.size()) - int(was.size())) == 1) {
@@ -330,7 +341,7 @@ Main::Session &PreviewController::session() const {
 	const auto child = inner->lifetime().make_state<Ui::RpWidget*>(nullptr);
 	std::move(state) | rpl::filter([=](BotState state) {
 		return state.state != LookupState::Loading;
-	}) | rpl::on_next([=](BotState state) {
+	}) | rpl::start_with_next([=](BotState state) {
 		raw->toggle(
 			(state.state == LookupState::Ready
 				|| state.state == LookupState::Unsupported),
@@ -365,7 +376,7 @@ Main::Session &PreviewController::session() const {
 			rpl::combine(
 				content->sizeValue(),
 				label->sizeValue()
-			) | rpl::on_next([=](QSize size, QSize inner) {
+			) | rpl::start_with_next([=](QSize size, QSize inner) {
 				label->move(
 					(size.width() - inner.width()) / 2,
 					(size.height() - inner.height()) / 2);
@@ -377,11 +388,11 @@ Main::Session &PreviewController::session() const {
 		}
 		(*child)->show();
 
-		inner->widthValue() | rpl::on_next([=](int width) {
+		inner->widthValue() | rpl::start_with_next([=](int width) {
 			(*child)->resizeToWidth(width);
 		}, (*child)->lifetime());
 
-		(*child)->heightValue() | rpl::on_next([=](int height) {
+		(*child)->heightValue() | rpl::start_with_next([=](int height) {
 			inner->resize(inner->width(), height + st::contactSkip);
 		}, inner->lifetime());
 	}, inner->lifetime());
@@ -393,9 +404,9 @@ Main::Session &PreviewController::session() const {
 Chatbots::Chatbots(
 	QWidget *parent,
 	not_null<Window::SessionController*> controller)
-: Section(parent, controller)
+: BusinessSection(parent, controller)
 , _bottomSkipRounding(st::boxRadius, st::boxDividerBg) {
-	setupContent();
+	setupContent(controller);
 }
 
 Chatbots::~Chatbots() {
@@ -412,11 +423,12 @@ rpl::producer<QString> Chatbots::title() {
 	return tr::lng_chatbots_title();
 }
 
-void Chatbots::setupContent() {
+void Chatbots::setupContent(
+		not_null<Window::SessionController*> controller) {
 	using namespace rpl::mappers;
 
 	const auto content = Ui::CreateChild<Ui::VerticalLayout>(this);
-	const auto current = controller()->session().data().chatbots().current();
+	const auto current = controller->session().data().chatbots().current();
 
 	_recipients = Data::BusinessRecipients::MakeValid(current.recipients);
 	_permissions = current.permissions;
@@ -429,8 +441,8 @@ void Chatbots::setupContent() {
 		.about = tr::lng_chatbots_about(
 			lt_link,
 			tr::lng_chatbots_about_link(
-				tr::url(tr::lng_chatbots_info_url(tr::now))),
-			tr::marked),
+			) | Ui::Text::ToLink(tr::lng_chatbots_info_url(tr::now)),
+			Ui::Text::WithEntities),
 		.aboutMargins = st::peerAppearanceCoverLabelMargin,
 	});
 
@@ -450,15 +462,12 @@ void Chatbots::setupContent() {
 		current.bot,
 		current.bot ? LookupState::Ready : LookupState::Empty
 	}) | rpl::then(
-		LookupBot(&controller()->session(), _usernameValue.changes())
+		LookupBot(&controller->session(), _usernameValue.changes())
 	);
 
 	const auto resetBot = [=] {
 		username->setText(QString());
 		username->setFocus();
-
-		_permissions = Defaults();
-		refreshDetails();
 	};
 	content->add(object_ptr<Ui::SlideWrap<Ui::RpWidget>>(
 		content,
@@ -467,37 +476,10 @@ void Chatbots::setupContent() {
 	Ui::AddDividerText(
 		content,
 		tr::lng_chatbots_add_about(),
-		st::peerAppearanceDividerTextMargin,
-		st::defaultDividerLabel,
-		RectPart::Top);
+		st::peerAppearanceDividerTextMargin);
 
-	_detailsWrap = content->add(object_ptr<Ui::VerticalLayout>(content));
-
-	refreshDetails();
-	_botValue.changes() | rpl::on_next([=](const BotState &value) {
-		_permissions = Defaults();
-		refreshDetails();
-	}, lifetime());
-
-	Ui::ResizeFitChild(this, content);
-}
-
-void Chatbots::refreshDetails() {
-	_resolvePermissions = [=] {
-		return Data::ChatbotsPermissions();
-	};
-	while (_detailsWrap->count()) {
-		delete _detailsWrap->widgetAt(0);
-	}
-
-	const auto bot = _botValue.current().bot;
-	if (!bot) {
-		return;
-	}
-
-	const auto content = _detailsWrap;
 	AddBusinessRecipientsSelector(content, {
-		.controller = controller(),
+		.controller = controller,
 		.title = tr::lng_chatbots_access_title(),
 		.data = &_recipients,
 		.type = Data::BusinessRecipientsType::Bots,
@@ -518,38 +500,9 @@ void Chatbots::refreshDetails() {
 	content->add(std::move(permissions.widget));
 	_resolvePermissions = permissions.value;
 
-
-	std::move(
-		permissions.changes
-	) | rpl::on_next([=](Data::ChatbotsPermissions now) {
-		const auto warn = [&](tr::phrase<lngtag_bot> text) {
-			controller()->show(Ui::MakeInformBox({
-				.text = text(tr::now, lt_bot, tr::bold(bot->name()), tr::rich),
-				.title = tr::lng_chatbots_warning_title(),
-			}));
-		};
-
-		const auto was = _permissions.current();
-		const auto diff = now ^ was;
-		const auto enabled = diff & now;
-		using Flag = Data::ChatbotsPermission;
-		if (enabled & (Flag::TransferGifts | Flag::SellGifts)) {
-			if (enabled & Flag::TransferStars) {
-				warn(tr::lng_chatbots_warning_both_text);
-			} else {
-				warn(tr::lng_chatbots_warning_gifts_text);
-			}
-		} else if (enabled & Flag::TransferStars) {
-			warn(tr::lng_chatbots_warning_stars_text);
-		} else if (enabled & Flag::EditUsername) {
-			warn(tr::lng_chatbots_warning_username_text);
-		}
-		_permissions = now;
-	}, lifetime());
-
 	Ui::AddSkip(content);
 
-	_detailsWrap->resizeToWidth(width());
+	Ui::ResizeFitChild(this, content);
 }
 
 void Chatbots::save() {

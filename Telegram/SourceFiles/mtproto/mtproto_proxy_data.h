@@ -24,7 +24,6 @@ struct ProxyData {
 	enum class Status {
 		Valid,
 		Unsupported,
-		IncorrectSecret,
 		Invalid,
 	};
 

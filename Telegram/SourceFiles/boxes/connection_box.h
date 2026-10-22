@@ -47,12 +47,8 @@ public:
 		const QMap<QString, QString> &fields);
 
 	static object_ptr<Ui::BoxContent> CreateOwningBox(
-		not_null<Main::Account*> account,
-		const QString &highlightId = QString());
-	static void Show(
-		not_null<Window::SessionController*> controller,
-		const QString &highlightId = QString());
-	object_ptr<Ui::BoxContent> create(const QString &highlightId = QString());
+		not_null<Main::Account*> account);
+	object_ptr<Ui::BoxContent> create();
 
 	enum class ItemState {
 		Connecting,
@@ -76,10 +72,8 @@ public:
 	};
 
 	void deleteItem(int id);
-	void deleteItems();
 	void restoreItem(int id);
-	void shareItem(int id, bool qr);
-	void shareItems();
+	void shareItem(int id);
 	void applyItem(int id);
 	object_ptr<Ui::BoxContent> editItemBox(int id);
 	object_ptr<Ui::BoxContent> addNewItemBox();
@@ -92,8 +86,6 @@ public:
 	void addNewItem(const ProxyData &proxy);
 
 	rpl::producer<ItemView> views() const;
-
-	rpl::producer<bool> listShareableChanges() const;
 
 	~ProxiesBoxController();
 
@@ -114,7 +106,7 @@ private:
 	std::vector<Item>::iterator findByProxy(const ProxyData &proxy);
 	void setDeleted(int id, bool deleted);
 	void updateView(const Item &item);
-	void share(const ProxyData &proxy, bool qr = false);
+	void share(const ProxyData &proxy);
 	void saveDelayed();
 	void refreshChecker(Item &item);
 	void setupChecker(int id, const Checker &checker);

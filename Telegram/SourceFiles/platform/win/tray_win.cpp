@@ -79,7 +79,8 @@ bool DarkTasbarValueValid/* = false*/;
 
 	static const auto Content = [&] {
 		auto f = QFile(u":/gui/icons/tray/monochrome.svg"_q);
-		return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray();
+		f.open(QIODevice::ReadOnly);
+		return f.readAll();
 	}();
 	static auto Mask = QImage();
 	static auto Size = 0;
@@ -202,7 +203,7 @@ void Tray::createIcon() {
 			&QPlatformSystemTrayIcon::contextMenuRequested
 		) | rpl::filter([=] {
 			return _menu != nullptr;
-		}) | rpl::on_next([=](
+		}) | rpl::start_with_next([=](
 				QPoint globalNativePosition,
 				const QPlatformScreen *screen) {
 			_aboutToShowRequests.fire({});
@@ -270,7 +271,7 @@ void Tray::addAction(rpl::producer<QString> text, Fn<void()> &&callback) {
 	auto callbackLater = crl::guard(_menu.get(), [=] {
 		using namespace rpl::mappers;
 		_callbackFromTrayLifetime = _menu->shownValue(
-		) | rpl::filter(!_1) | rpl::take(1) | rpl::on_next([=] {
+		) | rpl::filter(!_1) | rpl::take(1) | rpl::start_with_next([=] {
 			callback();
 		});
 	});
@@ -278,7 +279,7 @@ void Tray::addAction(rpl::producer<QString> text, Fn<void()> &&callback) {
 	const auto action = _menu->addAction(QString(), std::move(callbackLater));
 	std::move(
 		text
-	) | rpl::on_next([=](const QString &text) {
+	) | rpl::start_with_next([=](const QString &text) {
 		action->setText(text);
 	}, _actionsLifetime);
 }

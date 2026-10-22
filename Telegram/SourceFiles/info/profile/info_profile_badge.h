@@ -35,14 +35,13 @@ namespace Info::Profile {
 
 class EmojiStatusPanel;
 
-enum class BadgeType : uchar {
+enum class BadgeType {
 	None = 0x00,
 	Verified = 0x01,
 	BotVerified = 0x02,
 	Premium = 0x04,
 	Scam = 0x08,
 	Fake = 0x10,
-	Direct = 0x20,
 };
 inline constexpr bool is_flag_type(BadgeType) { return true; }
 
@@ -70,7 +69,6 @@ public:
 	[[nodiscard]] Ui::RpWidget *widget() const;
 
 	void setPremiumClickCallback(Fn<void()> callback);
-	void setOverrideStyle(const style::InfoPeerBadge *st);
 	[[nodiscard]] rpl::producer<> updated() const;
 	void move(int left, int top, int bottom);
 
@@ -78,11 +76,9 @@ public:
 
 private:
 	void setContent(Content content);
-	[[nodiscard]] const style::InfoPeerBadge &st() const;
 
 	const not_null<QWidget*> _parent;
 	const style::InfoPeerBadge &_st;
-	const style::InfoPeerBadge *_overrideSt = nullptr;
 	const not_null<Main::Session*> _session;
 	EmojiStatusPanel *_emojiStatusPanel = nullptr;
 	const int _customStatusLoopsLimit = 0;
@@ -100,8 +96,6 @@ private:
 [[nodiscard]] rpl::producer<Badge::Content> BadgeContentForPeer(
 	not_null<PeerData*> peer);
 [[nodiscard]] rpl::producer<Badge::Content> VerifiedContentForPeer(
-	not_null<PeerData*> peer);
-[[nodiscard]] rpl::producer<Badge::Content> BotVerifyBadgeForPeer(
 	not_null<PeerData*> peer);
 
 } // namespace Info::Profile

@@ -67,7 +67,6 @@ constexpr auto kMultiDraftCursorsTagOld = quint64(0xFFFF'FFFF'FFFF'FF02ULL);
 constexpr auto kMultiDraftTag = quint64(0xFFFF'FFFF'FFFF'FF03ULL);
 constexpr auto kMultiDraftCursorsTag = quint64(0xFFFF'FFFF'FFFF'FF04ULL);
 constexpr auto kRichDraftsTag = quint64(0xFFFF'FFFF'FFFF'FF05ULL);
-constexpr auto kDraftsTag2 = quint64(0xFFFF'FFFF'FFFF'FF06ULL);
 
 enum { // Local Storage Keys
 	lskUserMap = 0x00,
@@ -99,8 +98,6 @@ enum { // Local Storage Keys
 	lskRoundPlaceholder = 0x1a, // no data
 	lskInlineBotsDownloads = 0x1b, // no data
 	lskMediaLastPlaybackPositions = 0x1c, // no data
-	lskBotStorages = 0x1d, // data: PeerId botId
-	lskPrefs = 0x1e, // no data
 };
 
 auto EmptyMessageDraftSources()
@@ -137,33 +134,6 @@ auto EmptyMessageDraftSources()
 	return cWorkingDir() + u"tdata/tdld/"_q;
 }
 
-[[nodiscard]] std::pair<quint64, quint64> SerializeSuggest(
-		SuggestOptions options) {
-	return {
-		((quint64(options.exists) << 63)
-			| (quint64(quint32(options.date)))),
-		((quint64(options.ton) << 63)
-			| (quint64(options.priceWhole) << 32)
-			| (quint64(options.priceNano))),
-	};
-}
-
-[[nodiscard]] SuggestOptions DeserializeSuggest(
-		std::pair<quint64, quint64> suggest) {
-	const auto exists = (suggest.first >> 63) ? 1 : 0;
-	const auto date = TimeId(uint32(suggest.first & 0xFFFF'FFFFULL));
-	const auto ton = (suggest.second >> 63) ? 1 : 0;
-	const auto priceWhole = uint32((suggest.second >> 32) & 0x7FFF'FFFFULL);
-	const auto priceNano = uint32(suggest.second & 0xFFFF'FFFFULL);
-	return {
-		.exists = uint32(exists),
-		.priceWhole = priceWhole,
-		.priceNano = priceNano,
-		.ton = uint32(ton),
-		.date = date,
-	};
-}
-
 } // namespace
 
 Account::Account(not_null<Main::Account*> owner, const QString &dataName)
@@ -178,7 +148,6 @@ Account::Account(not_null<Main::Account*> owner, const QString &dataName)
 , _cacheTotalTimeLimit(Database::Settings().totalTimeLimit)
 , _cacheBigFileTotalTimeLimit(Database::Settings().totalTimeLimit)
 , _writeMapTimer([=] { writeMap(); })
-, _writePrefsTimer([=] { writePrefs(); })
 , _writeLocationsTimer([=] { writeLocations(); })
 , _writeSearchSuggestionsTimer([=] { writeSearchSuggestions(); }) {
 }
@@ -186,13 +155,8 @@ Account::Account(not_null<Main::Account*> owner, const QString &dataName)
 Account::~Account() {
 	Expects(!_writeSearchSuggestionsTimer.isActive());
 
-	if (_localKey) {
-		if (_prefsChanged) {
-			writePrefs();
-		}
-		if (_mapChanged) {
-			writeMap();
-		}
+	if (_localKey && _mapChanged) {
+		writeMap();
 	}
 }
 
@@ -243,7 +207,6 @@ void Account::clearLegacyFiles() {
 
 base::flat_set<QString> Account::collectGoodNames() const {
 	const auto keys = {
-		_prefsKey,
 		_locationsKey,
 		_settingsKey,
 		_installedStickersKey,
@@ -290,9 +253,6 @@ base::flat_set<QString> Account::collectGoodNames() const {
 		push(value);
 	}
 	for (const auto &[key, value] : _draftCursorsMap) {
-		push(value);
-	}
-	for (const auto &[key, value] : _botStoragesMap) {
 		push(value);
 	}
 	for (const auto &value : keys) {
@@ -348,9 +308,7 @@ Account::ReadMapResult Account::readMapWith(
 	base::flat_map<PeerId, FileKey> draftsMap;
 	base::flat_map<PeerId, FileKey> draftCursorsMap;
 	base::flat_map<PeerId, bool> draftsNotReadMap;
-	base::flat_map<PeerId, FileKey> botStoragesMap;
-	base::flat_map<PeerId, bool> botStoragesNotReadMap;
-	quint64 prefsKey = 0, locationsKey = 0, reportSpamStatusesKey = 0, trustedPeersKey = 0;
+	quint64 locationsKey = 0, reportSpamStatusesKey = 0, trustedPeersKey = 0;
 	quint64 recentStickersKeyOld = 0;
 	quint64 installedStickersKey = 0, featuredStickersKey = 0, recentStickersKey = 0, favedStickersKey = 0, archivedStickersKey = 0;
 	quint64 installedMasksKey = 0, recentMasksKey = 0, archivedMasksKey = 0;
@@ -405,9 +363,6 @@ Account::ReadMapResult Account::readMapWith(
 				map.stream >> key >> first >> second >> size;
 				// Just ignore the key, it will be removed as a leaked one.
 			}
-		} break;
-		case lskPrefs: {
-			map.stream >> prefsKey;
 		} break;
 		case lskLocations: {
 			map.stream >> locationsKey;
@@ -488,18 +443,6 @@ Account::ReadMapResult Account::readMapWith(
 				>> webviewStorageTokenBots
 				>> webviewStorageTokenOther;
 		} break;
-		case lskBotStorages: {
-			quint32 count = 0;
-			map.stream >> count;
-			for (quint32 i = 0; i < count; ++i) {
-				FileKey key;
-				quint64 peerIdSerialized;
-				map.stream >> key >> peerIdSerialized;
-				const auto peerId = DeserializePeerId(peerIdSerialized);
-				botStoragesMap.emplace(peerId, key);
-				botStoragesNotReadMap.emplace(peerId, true);
-			}
-		} break;
 		default:
 			LOG(("App Error: unknown key type in encrypted map: %1").arg(keyType));
 			return ReadMapResult::Failed;
@@ -514,10 +457,7 @@ Account::ReadMapResult Account::readMapWith(
 	_draftsMap = draftsMap;
 	_draftCursorsMap = draftCursorsMap;
 	_draftsNotReadMap = draftsNotReadMap;
-	_botStoragesMap = botStoragesMap;
-	_botStoragesNotReadMap = botStoragesNotReadMap;
 
-	_prefsKey = prefsKey;
 	_locationsKey = locationsKey;
 	_trustedPeersKey = trustedPeersKey;
 	_recentStickersKeyOld = recentStickersKeyOld;
@@ -552,9 +492,6 @@ Account::ReadMapResult Account::readMapWith(
 		_mapChanged = false;
 	}
 
-	if (_prefsKey) {
-		readPrefs();
-	}
 	if (_locationsKey) {
 		readLocations();
 	}
@@ -635,7 +572,6 @@ void Account::writeMap() {
 	if (!self.isEmpty()) mapSize += sizeof(quint32) + Serialize::bytearraySize(self);
 	if (!_draftsMap.empty()) mapSize += sizeof(quint32) * 2 + _draftsMap.size() * sizeof(quint64) * 2;
 	if (!_draftCursorsMap.empty()) mapSize += sizeof(quint32) * 2 + _draftCursorsMap.size() * sizeof(quint64) * 2;
-	if (_prefsKey) mapSize += sizeof(quint32) + sizeof(quint64);
 	if (_locationsKey) mapSize += sizeof(quint32) + sizeof(quint64);
 	if (_trustedPeersKey) mapSize += sizeof(quint32) + sizeof(quint64);
 	if (_recentStickersKeyOld) mapSize += sizeof(quint32) + sizeof(quint64);
@@ -663,7 +599,6 @@ void Account::writeMap() {
 	if (_roundPlaceholderKey) mapSize += sizeof(quint32) + sizeof(quint64);
 	if (_inlineBotsDownloadsKey) mapSize += sizeof(quint32) + sizeof(quint64);
 	if (_mediaLastPlaybackPositionsKey) mapSize += sizeof(quint32) + sizeof(quint64);
-	if (!_botStoragesMap.empty()) mapSize += sizeof(quint32) * 2 + _botStoragesMap.size() * sizeof(quint64) * 2;
 
 	EncryptedDescriptor mapData(mapSize);
 	if (!self.isEmpty()) {
@@ -680,9 +615,6 @@ void Account::writeMap() {
 		for (const auto &[key, value] : _draftCursorsMap) {
 			mapData.stream << quint64(value) << SerializePeerId(key);
 		}
-	}
-	if (_prefsKey) {
-		mapData.stream << quint32(lskPrefs) << quint64(_prefsKey);
 	}
 	if (_locationsKey) {
 		mapData.stream << quint32(lskLocations) << quint64(_locationsKey);
@@ -749,12 +681,6 @@ void Account::writeMap() {
 		mapData.stream << quint32(lskMediaLastPlaybackPositions);
 		mapData.stream << quint64(_mediaLastPlaybackPositionsKey);
 	}
-	if (!_botStoragesMap.empty()) {
-		mapData.stream << quint32(lskBotStorages) << quint32(_botStoragesMap.size());
-		for (const auto &[key, value] : _botStoragesMap) {
-			mapData.stream << quint64(value) << SerializePeerId(key);
-		}
-	}
 	map.writeEncrypted(mapData, _localKey);
 
 	_mapChanged = false;
@@ -767,9 +693,7 @@ void Account::reset() {
 	_draftsMap.clear();
 	_draftCursorsMap.clear();
 	_draftsNotReadMap.clear();
-	_botStoragesMap.clear();
-	_botStoragesNotReadMap.clear();
-	_prefsKey = _locationsKey = _trustedPeersKey = 0;
+	_locationsKey = _trustedPeersKey = 0;
 	_recentStickersKeyOld = 0;
 	_installedStickersKey = 0;
 	_featuredStickersKey = 0;
@@ -1223,9 +1147,7 @@ void EnumerateDrafts(
 		} else if (key.isLocal()
 			&& (!supportMode || key.topicRootId())) {
 			const auto i = map.find(
-				Data::DraftKey::Cloud(
-					key.topicRootId(),
-					key.monoforumPeerId()));
+				Data::DraftKey::Cloud(key.topicRootId()));
 			const auto cloud = (i != end(map)) ? i->second.get() : nullptr;
 			if (Data::DraftsAreEqual(draft.get(), cloud)) {
 				continue;
@@ -1234,7 +1156,6 @@ void EnumerateDrafts(
 		callback(
 			key,
 			draft->reply,
-			draft->suggest,
 			draft->textWithTags,
 			draft->webpage,
 			draft->cursor);
@@ -1248,7 +1169,6 @@ void EnumerateDrafts(
 			callback(
 				key,
 				draft.reply,
-				draft.suggest,
 				draft.textWithTags,
 				draft.webpage,
 				cursor);
@@ -1314,7 +1234,6 @@ void Account::writeDrafts(not_null<History*> history) {
 	const auto sizeCallback = [&](
 			auto&&, // key
 			const FullReplyTo &reply,
-			SuggestOptions suggest,
 			const TextWithTags &text,
 			const Data::WebPageDraft &webpage,
 			auto&&) { // cursor
@@ -1322,7 +1241,6 @@ void Account::writeDrafts(not_null<History*> history) {
 			+ Serialize::stringSize(text.text)
 			+ TextUtilities::SerializeTagsSize(text.tags)
 			+ sizeof(qint64) + sizeof(qint64) // messageId
-			+ (sizeof(quint64) * 2) // suggest
 			+ Serialize::stringSize(webpage.url)
 			+ sizeof(qint32) // webpage.forceLargeMedia
 			+ sizeof(qint32) // webpage.forceSmallMedia
@@ -1338,26 +1256,22 @@ void Account::writeDrafts(not_null<History*> history) {
 
 	EncryptedDescriptor data(size);
 	data.stream
-		<< quint64(kDraftsTag2)
+		<< quint64(kRichDraftsTag)
 		<< SerializePeerId(peerId)
 		<< quint32(count);
 
 	const auto writeCallback = [&](
 			const Data::DraftKey &key,
 			const FullReplyTo &reply,
-			SuggestOptions suggest,
 			const TextWithTags &text,
 			const Data::WebPageDraft &webpage,
 			auto&&) { // cursor
-		const auto serialized = SerializeSuggest(suggest);
 		data.stream
 			<< key.serialize()
 			<< text.text
 			<< TextUtilities::SerializeTags(text.tags)
 			<< qint64(reply.messageId.peer.value)
 			<< qint64(reply.messageId.msg.bare)
-			<< serialized.first
-			<< serialized.second
 			<< webpage.url
 			<< qint32(webpage.forceLargeMedia ? 1 : 0)
 			<< qint32(webpage.forceSmallMedia ? 1 : 0)
@@ -1414,7 +1328,6 @@ void Account::writeDraftCursors(not_null<History*> history) {
 	const auto writeCallback = [&](
 			const Data::DraftKey &key,
 			auto&&, // reply
-			auto&&, // suggest
 			auto&&, // text
 			auto&&, // webpage
 			const MessageCursor &cursor) { // cursor
@@ -1484,7 +1397,7 @@ void Account::readDraftCursors(PeerId peerId, Data::HistoryDrafts &map) {
 			? Data::DraftKey::FromSerialized(keyValue)
 			: keysOld
 			? Data::DraftKey::FromSerializedOld(keyValueOld)
-			: Data::DraftKey::Local(MsgId(), PeerId());
+			: Data::DraftKey::Local(0);
 		qint32 position = 0, anchor = 0, scroll = Ui::kQFixedMax;
 		draft.stream >> position >> anchor >> scroll;
 		if (const auto i = map.find(key); i != end(map)) {
@@ -1511,14 +1424,13 @@ void Account::readDraftCursorsLegacy(
 		return;
 	}
 
-	if (const auto i = map.find(Data::DraftKey::Local(MsgId(), PeerId()))
-		; i != end(map)) {
+	if (const auto i = map.find(Data::DraftKey::Local({})); i != end(map)) {
 		i->second->cursor = MessageCursor(
 			localPosition,
 			localAnchor,
 			localScroll);
 	}
-	if (const auto i = map.find(Data::DraftKey::LocalEdit(MsgId(), PeerId()))
+	if (const auto i = map.find(Data::DraftKey::LocalEdit({}))
 		; i != end(map)) {
 		i->second->cursor = MessageCursor(
 			editPosition,
@@ -1531,7 +1443,7 @@ void Account::readDraftsWithCursors(not_null<History*> history) {
 	const auto guard = gsl::finally([&] {
 		if (const auto migrated = history->migrateFrom()) {
 			readDraftsWithCursors(migrated);
-			migrated->clearLocalEditDraft(MsgId(), PeerId());
+			migrated->clearLocalEditDraft({});
 			history->takeLocalDraft(migrated);
 		}
 	});
@@ -1575,14 +1487,12 @@ void Account::readDraftsWithCursors(not_null<History*> history) {
 	}
 	auto map = Data::HistoryDrafts();
 	const auto keysOld = (tag == kMultiDraftTagOld);
-	const auto withSuggest = (tag == kDraftsTag2);
-	const auto rich = (tag == kRichDraftsTag) || withSuggest;
+	const auto rich = (tag == kRichDraftsTag);
 	for (auto i = 0; i != count; ++i) {
 		TextWithTags text;
 		QByteArray textTagsSerialized;
 		qint64 keyValue = 0;
 		qint64 messageIdPeer = 0, messageIdMsg = 0;
-		std::pair<quint64, quint64> suggestSerialized;
 		qint32 keyValueOld = 0;
 		QString webpageUrl;
 		qint32 webpageForceLargeMedia = 0;
@@ -1616,13 +1526,7 @@ void Account::readDraftsWithCursors(not_null<History*> history) {
 				>> text.text
 				>> textTagsSerialized
 				>> messageIdPeer
-				>> messageIdMsg;
-			if (withSuggest) {
-				draft.stream
-					>> suggestSerialized.first
-					>> suggestSerialized.second;
-			}
-			draft.stream
+				>> messageIdMsg
 				>> webpageUrl
 				>> webpageForceLargeMedia
 				>> webpageForceSmallMedia
@@ -1645,7 +1549,6 @@ void Account::readDraftsWithCursors(not_null<History*> history) {
 						MsgId(messageIdMsg)),
 					.topicRootId = key.topicRootId(),
 				},
-				DeserializeSuggest(suggestSerialized),
 				MessageCursor(),
 				Data::WebPageDraft{
 					.url = webpageUrl,
@@ -1711,15 +1614,13 @@ void Account::readDraftsWithCursorsLegacy(
 		editData.text.size());
 
 	const auto topicRootId = MsgId();
-	const auto monoforumPeerId = PeerId();
 	auto map = base::flat_map<Data::DraftKey, std::unique_ptr<Data::Draft>>();
 	if (!msgData.text.isEmpty() || msgReplyTo) {
 		map.emplace(
-			Data::DraftKey::Local(topicRootId, monoforumPeerId),
+			Data::DraftKey::Local(topicRootId),
 			std::make_unique<Data::Draft>(
 				msgData,
 				FullReplyTo{ FullMsgId(peerId, MsgId(msgReplyTo)) },
-				SuggestOptions(),
 				MessageCursor(),
 				Data::WebPageDraft{
 					.removed = (msgPreviewCancelled == 1),
@@ -1727,11 +1628,10 @@ void Account::readDraftsWithCursorsLegacy(
 	}
 	if (editMsgId) {
 		map.emplace(
-			Data::DraftKey::LocalEdit(topicRootId, monoforumPeerId),
+			Data::DraftKey::LocalEdit(topicRootId),
 			std::make_unique<Data::Draft>(
 				editData,
 				FullReplyTo{ FullMsgId(peerId, editMsgId) },
-				SuggestOptions(),
 				MessageCursor(),
 				Data::WebPageDraft{
 					.removed = (editPreviewCancelled == 1),
@@ -2043,10 +1943,6 @@ void Account::readStickerSets(
 		Data::StickersSetsOrder *outOrder,
 		Data::StickersSetFlags readingFlags) {
 	using SetFlag = Data::StickersSetFlag;
-
-	if (!stickersKey) {
-		return;
-	}
 
 	FileReadDescriptor stickers;
 	if (!ReadEncryptedFile(stickers, stickersKey, _basePath, _localKey)) {
@@ -2585,8 +2481,6 @@ void Account::importOldRecentStickers() {
 }
 
 void Account::readInstalledStickers() {
-	DEBUG_LOG(("Init: Read installed sticker sets."));
-
 	if (!_installedStickersKey) {
 		return importOldRecentStickers();
 	}
@@ -2599,8 +2493,6 @@ void Account::readInstalledStickers() {
 }
 
 void Account::readFeaturedStickers() {
-	DEBUG_LOG(("Init: Read featured sticker sets."));
-
 	readStickerSets(
 		_featuredStickersKey,
 		&_owner->session().data().stickers().featuredSetsOrderRef(),
@@ -2620,8 +2512,6 @@ void Account::readFeaturedStickers() {
 }
 
 void Account::readFeaturedCustomEmoji() {
-	DEBUG_LOG(("Init: Read featured emoji sets."));
-
 	readStickerSets(
 		_featuredCustomEmojiKey,
 		&_owner->session().data().stickers().featuredEmojiSetsOrderRef(),
@@ -2629,26 +2519,18 @@ void Account::readFeaturedCustomEmoji() {
 }
 
 void Account::readRecentStickers() {
-	DEBUG_LOG(("Init: Read recent stickers."));
-
 	readStickerSets(_recentStickersKey);
 }
 
 void Account::readRecentMasks() {
-	DEBUG_LOG(("Init: Read recent masks."));
-
 	readStickerSets(_recentMasksKey);
 }
 
 void Account::readFavedStickers() {
-	DEBUG_LOG(("Init: Read faved masks."));
-
 	readStickerSets(_favedStickersKey);
 }
 
 void Account::readArchivedStickers() {
-	DEBUG_LOG(("Init: Read archived stickers."));
-
 	// TODO: refactor to support for multiple accounts.
 	static bool archivedStickersRead = false;
 	if (!archivedStickersRead) {
@@ -2660,8 +2542,6 @@ void Account::readArchivedStickers() {
 }
 
 void Account::readArchivedMasks() {
-	DEBUG_LOG(("Init: Read archived masks."));
-
 	// TODO: refactor to support for multiple accounts.
 	static bool archivedMasksRead = false;
 	if (!archivedMasksRead) {
@@ -2673,8 +2553,6 @@ void Account::readArchivedMasks() {
 }
 
 void Account::readInstalledMasks() {
-	DEBUG_LOG(("Init: Read installed masks."));
-
 	readStickerSets(
 		_installedMasksKey,
 		&_owner->session().data().stickers().maskSetsOrderRef(),
@@ -2682,8 +2560,6 @@ void Account::readInstalledMasks() {
 }
 
 void Account::readInstalledCustomEmoji() {
-	DEBUG_LOG(("Init: Read installed emoji sets."));
-
 	readStickerSets(
 		_installedCustomEmojiKey,
 		&_owner->session().data().stickers().emojiSetsOrderRef(),
@@ -2719,11 +2595,7 @@ void Account::writeSavedGifs() {
 }
 
 void Account::readSavedGifs() {
-	DEBUG_LOG(("Init: Read saved GIFs."));
-
-	if (!_savedGifsKey) {
-		return;
-	}
+	if (!_savedGifsKey) return;
 
 	FileReadDescriptor gifs;
 	if (!ReadEncryptedFile(gifs, _savedGifsKey, _basePath, _localKey)) {
@@ -2966,7 +2838,7 @@ void Account::writeExportSettings(const Export::Settings &settings) {
 		<< quint32(settings.format)
 		<< settings.path
 		<< quint32(settings.availableAt);
-	settings.singlePeer.match([&](const MTPDinputPeerUser &user) {
+	settings.singlePeer.match([&](const MTPDinputPeerUser & user) {
 		data.stream
 			<< kSinglePeerTypeUser
 			<< quint64(user.vuser_id().v)
@@ -2995,16 +2867,12 @@ void Account::writeExportSettings(const Export::Settings &settings) {
 }
 
 Export::Settings Account::readExportSettings() {
-	if (!_exportSettingsKey) {
-		return {};
-	}
-
 	FileReadDescriptor file;
 	if (!ReadEncryptedFile(file, _exportSettingsKey, _basePath, _localKey)) {
 		ClearKey(_exportSettingsKey, _basePath);
 		_exportSettingsKey = 0;
 		writeMapDelayed();
-		return {};
+		return Export::Settings();
 	}
 
 	quint32 types = 0, fullChats = 0;
@@ -3605,63 +3473,6 @@ void Account::writeInlineBotsDownloads(const QByteArray &bytes) {
 	file.writeEncrypted(data, _localKey);
 }
 
-void Account::writeBotStorage(PeerId botId, const QByteArray &serialized) {
-	if (serialized.isEmpty()) {
-		auto i = _botStoragesMap.find(botId);
-		if (i != _botStoragesMap.cend()) {
-			ClearKey(i->second, _basePath);
-			_botStoragesMap.erase(i);
-			writeMapDelayed();
-		}
-		_botStoragesNotReadMap.remove(botId);
-		return;
-	}
-
-	auto i = _botStoragesMap.find(botId);
-	if (i == _botStoragesMap.cend()) {
-		i = _botStoragesMap.emplace(botId, GenerateKey(_basePath)).first;
-		writeMapQueued();
-	}
-
-	auto size = Serialize::bytearraySize(serialized);
-
-	EncryptedDescriptor data(size);
-	data.stream << serialized;
-
-	FileWriteDescriptor file(i->second, _basePath);
-	file.writeEncrypted(data, _localKey);
-
-	_botStoragesNotReadMap.remove(botId);
-}
-
-QByteArray Account::readBotStorage(PeerId botId) {
-	if (!_botStoragesNotReadMap.remove(botId)) {
-		return {};
-	}
-
-	const auto j = _botStoragesMap.find(botId);
-	if (j == _botStoragesMap.cend()) {
-		return {};
-	}
-	FileReadDescriptor storage;
-	if (!ReadEncryptedFile(storage, j->second, _basePath, _localKey)) {
-		ClearKey(j->second, _basePath);
-		_botStoragesMap.erase(j);
-		writeMapDelayed();
-		return {};
-	}
-
-	auto result = QByteArray();
-	storage.stream >> result;
-	if (storage.stream.status() != QDataStream::Ok) {
-		ClearKey(j->second, _basePath);
-		_botStoragesMap.erase(j);
-		writeMapDelayed();
-		return {};
-	}
-	return result;
-}
-
 bool Account::encrypt(
 		const void *src,
 		void *dst,
@@ -3698,121 +3509,6 @@ Webview::StorageId TonSiteStorageId() {
 		Core::App().saveSettingsDelayed();
 	}
 	return result;
-}
-
-void Account::clearPref(std::string_view key) {
-	const auto i = _prefs.find(QByteArray(key.data(), key.size()));
-	if (i == end(_prefs)) {
-		return;
-	}
-	_prefs.erase(i);
-	writePrefsDelayed();
-}
-
-void Account::writePrefGeneric(
-		std::string_view key,
-		const QByteArray &value) {
-	const auto raw = QByteArray(key.data(), key.size());
-	if (const auto i = _prefs.find(raw); i != end(_prefs)) {
-		if (i->second == value) {
-			return;
-		}
-		i->second = value;
-	} else {
-		_prefs.emplace(raw, value);
-	}
-	writePrefsDelayed();
-}
-
-std::optional<QByteArray> Account::readPrefGeneric(std::string_view key) {
-	const auto i = _prefs.find(QByteArray(key.data(), key.size()));
-	return (i != end(_prefs)) ? i->second : std::optional<QByteArray>();
-}
-
-void Account::writePrefsDelayed() {
-	_prefsChanged = true;
-	_writePrefsTimer.callOnce(kDelayedWriteTimeout);
-}
-
-void Account::writePrefs() {
-	_writePrefsTimer.cancel();
-	if (!_prefsChanged) {
-		return;
-	}
-	_prefsChanged = false;
-
-	if (_prefs.empty()) {
-		if (_prefsKey) {
-			ClearKey(_prefsKey, _basePath);
-			_prefsKey = 0;
-			writeMapDelayed();
-		}
-	} else {
-		if (!_prefsKey) {
-			_prefsKey = GenerateKey(_basePath);
-			writeMapQueued();
-		}
-		quint32 size = sizeof(quint32);
-		for (const auto &[key, value] : _prefs) {
-			size += 2 * sizeof(quint32) + key.size() + value.size();
-		}
-
-		EncryptedDescriptor data(size);
-		data.stream << quint32(_prefs.size());
-		for (const auto &[key, value] : _prefs) {
-			data.stream << quint32(key.size()) << quint32(value.size());
-			data.stream.writeRawData(key.constData(), key.size());
-			data.stream.writeRawData(value.constData(), value.size());
-		}
-
-		FileWriteDescriptor file(_prefsKey, _basePath);
-		file.writeEncrypted(data, _localKey);
-	}
-}
-
-void Account::readPrefs() {
-	FileReadDescriptor prefs;
-	if (!ReadEncryptedFile(prefs, _prefsKey, _basePath, _localKey)) {
-		ClearKey(_prefsKey, _basePath);
-		_prefsKey = 0;
-		writeMapDelayed();
-		return;
-	}
-
-	auto count = quint32();
-	prefs.stream >> count;
-	if (prefs.stream.status() != QDataStream::Ok) {
-		return;
-	}
-	auto map = base::flat_map<QByteArray, QByteArray>();
-	map.reserve(count);
-	for (auto i = quint32(); i != count; ++i) {
-		auto keySize = quint32(), valueSize = quint32();
-		prefs.stream >> keySize >> valueSize;
-		auto key = QByteArray(keySize, Qt::Uninitialized);
-		auto value = QByteArray(valueSize, Qt::Uninitialized);
-		prefs.stream.readRawData(key.data(), keySize);
-		prefs.stream.readRawData(value.data(), valueSize);
-		if (prefs.stream.status() != QDataStream::Ok) {
-			return;
-		}
-		map.emplace(std::move(key), std::move(value));
-	}
-	_prefs = std::move(map);
-}
-
-// Define your own pref types in the similar way.
-template <>
-std::optional<bool> Account::readPrefImpl<bool>(std::string_view key) {
-	if (const auto data = readPrefGeneric(key)) {
-		return !data->isEmpty();
-	}
-	return {};
-}
-
-template <>
-void Account::writePrefImpl<bool>(std::string_view key, bool value) {
-	writePrefGeneric(key, value ? "\x1"_q : QByteArray());
 }
 
 } // namespace Storage

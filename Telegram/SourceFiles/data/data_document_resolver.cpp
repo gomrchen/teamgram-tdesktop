@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "data/data_document_resolver.h"
 
+#include "base/options.h"
 #include "base/platform/base_platform_info.h"
 #include "boxes/abstract_box.h" // Ui::show().
 #include "chat_helpers/ttl_media_layer_widget.h"
@@ -38,6 +39,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace Data {
 namespace {
 
+base::options::toggle OptionExternalVideoPlayer({
+	.id = kOptionExternalVideoPlayer,
+	.name = "External video player",
+	.description = "Use system video player instead of the internal one. "
+		"This disabes video playback in messages.",
+});
+
 void ConfirmDontWarnBox(
 		not_null<Ui::GenericBox*> box,
 		rpl::producer<TextWithEntities> &&text,
@@ -49,7 +57,7 @@ void ConfirmDontWarnBox(
 		std::move(check),
 		false,
 		st::defaultBoxCheckbox);
-	const auto weak = base::make_weak(checkbox.data());
+	const auto weak = Ui::MakeWeak(checkbox.data());
 	auto confirmed = crl::guard(weak, [=, callback = std::move(callback)] {
 		const auto checked = weak->checked();
 		box->closeBox();
@@ -122,13 +130,13 @@ void LaunchWithWarning(
 		File::Launch(name);
 	};
 	auto text = isIpReveal
-		? tr::lng_launch_svg_warning(tr::marked)
+		? tr::lng_launch_svg_warning(Ui::Text::WithEntities)
 		: ((nameType == Core::NameType::Executable)
 			? tr::lng_launch_exe_warning
 			: tr::lng_launch_other_warning)(
 				lt_extension,
-				rpl::single(tr::bold('.' + extension)),
-				tr::marked);
+				rpl::single(Ui::Text::Bold('.' + extension)),
+				Ui::Text::WithEntities);
 	auto check = (isIpReveal
 		? tr::lng_launch_exe_dont_ask
 		: tr::lng_launch_dont_ask)();
@@ -145,6 +153,8 @@ void LaunchWithWarning(
 
 } // namespace
 
+const char kOptionExternalVideoPlayer[] = "external-video-player";
+
 base::binary_guard ReadBackgroundImageAsync(
 		not_null<Data::DocumentMedia*> media,
 		FnMut<QImage(QImage)> postprocess,
@@ -159,11 +169,7 @@ base::binary_guard ReadBackgroundImageAsync(
 		guard = result.make_guard(),
 		callback = std::move(done)
 	]() mutable {
-		auto image = Ui::ReadBackgroundImage(path, bytes, gzipSvg).image;
-		if (image.isNull()) {
-			image = QImage(1, 1, QImage::Format_ARGB32_Premultiplied);
-			image.fill(Qt::black);
-		}
+		auto image = Ui::ReadBackgroundImage(path, bytes, gzipSvg);
 		if (postprocess) {
 			image = postprocess(std::move(image));
 		}
@@ -181,20 +187,22 @@ void ResolveDocument(
 		Window::SessionController *controller,
 		not_null<DocumentData*> document,
 		HistoryItem *item,
-		MsgId topicRootId,
-		PeerId monoforumPeerId,
-		bool showDrawButton) {
+		MsgId topicRootId) {
 	if (document->isNull()) {
 		return;
 	}
 	const auto msgId = item ? item->fullId() : FullMsgId();
 
 	const auto showDocument = [&] {
-		if (controller) {
+		if (OptionExternalVideoPlayer.value()
+			&& document->isVideoFile()
+			&& !document->filepath().isEmpty()) {
+			File::Launch(document->location(false).fname);
+		} else if (controller) {
 			controller->openDocument(
 				document,
 				true,
-				{ msgId, topicRootId, monoforumPeerId, showDrawButton });
+				{ msgId, topicRootId });
 		}
 	};
 
@@ -230,7 +238,7 @@ void ResolveDocument(
 	if (document->isTheme() && media->loaded(true)) {
 		showDocument();
 		location.accessDisable();
-	} else if (media->canBePlayed()) {
+	} else if (media->canBePlayed(item)) {
 		if (document->isAudioFile()
 			|| document->isVoiceMessage()
 			|| document->isVideoMessage()) {

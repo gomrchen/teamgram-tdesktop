@@ -29,12 +29,6 @@ class MediaGeneric;
 
 class MediaGenericPart : public Object {
 public:
-	using PaintBg = Fn<void(
-		Painter&,
-		const PaintContext&,
-		not_null<const MediaGeneric*>)>;
-	using PaintBgFactory = Fn<PaintBg()>;
-
 	virtual ~MediaGenericPart() = default;
 
 	virtual void draw(
@@ -59,9 +53,11 @@ public:
 
 struct MediaGenericDescriptor {
 	int maxWidth = 0;
-	MediaGenericPart::PaintBgFactory paintBgFactory;
-	ClickHandlerPtr fullAreaLink;
-	bool expandCurrentWidth = false;
+	Fn<void(
+		Painter&,
+		const PaintContext&,
+		not_null<const MediaGeneric*>)> paintBg;
+	ClickHandlerPtr serviceLink;
 	bool service = false;
 	bool hideServiceText = false;
 };
@@ -128,13 +124,11 @@ private:
 	[[nodiscard]] QMargins inBubblePadding() const;
 
 	std::vector<Entry> _entries;
-	Part::PaintBgFactory _paintBgFactory;
-	mutable Part::PaintBg _paintBg;
-	ClickHandlerPtr _fullAreaLink;
+	Fn<void(
+		Painter&,
+		const PaintContext&,
+		not_null<const MediaGeneric*>)> _paintBg;
 	int _maxWidthCap = 0;
-	int _marginTop = 0;
-	int _marginBottom = 0;
-	bool _expandCurrentWidth : 1 = false;
 	bool _service : 1 = false;
 	bool _hideServiceText : 1 = false;
 
@@ -147,8 +141,7 @@ public:
 		QMargins margins,
 		const style::TextStyle &st = st::defaultTextStyle,
 		const base::flat_map<uint16, ClickHandlerPtr> &links = {},
-		const Ui::Text::MarkedContext &context = {},
-		style::align align = style::al_top);
+		const Ui::Text::MarkedContext &context = {});
 
 	void draw(
 		Painter &p,
@@ -168,12 +161,10 @@ protected:
 		Painter &p,
 		not_null<const MediaGeneric*> owner,
 		const PaintContext &context) const;
-	virtual int elisionLines() const;
 
 private:
 	Ui::Text::String _text;
 	QMargins _margins;
-	style::align _align = {};
 
 };
 
@@ -196,35 +187,6 @@ private:
 
 };
 
-class LambdaGenericPart final : public MediaGenericPart {
-public:
-	LambdaGenericPart(
-		QSize size,
-		Fn<void(
-			Painter &p,
-			not_null<const MediaGeneric*> owner,
-			const PaintContext &context,
-			int outerWidth)> draw);
-
-	void draw(
-		Painter &p,
-		not_null<const MediaGeneric*> owner,
-		const PaintContext &context,
-		int outerWidth) const override;
-
-	QSize countOptimalSize() override;
-	QSize countCurrentSize(int newWidth) override;
-
-private:
-	QSize _size;
-	Fn<void(
-		Painter &p,
-		not_null<const MediaGeneric*> owner,
-		const PaintContext &context,
-		int outerWidth)> _draw;
-
-};
-
 class StickerInBubblePart final : public MediaGenericPart {
 public:
 	struct Data {
@@ -232,7 +194,7 @@ public:
 		int skipTop = 0;
 		int size = 0;
 		ChatHelpers::StickerLottieSize cacheTag = {};
-		bool stopOnLastFrame = false;
+		bool singleTimePlayback = false;
 		ClickHandlerPtr link;
 
 		explicit operator bool() const {

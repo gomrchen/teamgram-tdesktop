@@ -48,8 +48,6 @@ public:
 
 	void setSearchQuery(QString query) override;
 
-	void jumpToMessage(MsgId, Fn<void(FullMsgId)> done) override;
-
 	ListItemSelectionData computeSelectionData(
 		not_null<const HistoryItem*> item,
 		TextSelection selection) override;
@@ -107,7 +105,6 @@ private:
 
 	const not_null<PeerData*> _peer;
 	const MsgId _topicRootId = 0;
-	const PeerId _monoforumPeerId = 0;
 	PeerData * const _migrated = nullptr;
 	const Type _type = Type::Photo;
 

@@ -5,9 +5,11 @@
         "vscode": {
             "settings": {
                 "C_Cpp.intelliSenseEngine": "disabled",
+                "clangd.arguments": [
+                    "--compile-commands-dir=${workspaceFolder}/out"
+                ],
                 "cmake.generator": "Ninja Multi-Config",
-                "cmake.buildDirectory": "${workspaceFolder}/out",
-                "cmake.copyCompileCommands": "${workspaceFolder}/compile_commands.json"
+                "cmake.buildDirectory": "${workspaceFolder}/out"
             },
             "extensions": [
                 "ms-vscode.cpptools-extension-pack",

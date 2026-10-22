@@ -270,7 +270,9 @@ public:
 	}
 
 	// Internal links.
-	void checkStartUrls();
+	void checkStartUrl();
+	void checkSendPaths();
+	void checkFileOpen();
 	bool openLocalUrl(const QString &url, QVariant context);
 	bool openInternalUrl(const QString &url, QVariant context);
 	[[nodiscard]] QString changelogLink() const;
@@ -303,9 +305,6 @@ public:
 	[[nodiscard]] bool passcodeLocked() const;
 	rpl::producer<bool> passcodeLockChanges() const;
 	rpl::producer<bool> passcodeLockValue() const;
-
-	void lockBySetupEmail();
-	void unlockSetupEmail();
 
 	void checkAutoLock(crl::time lastNonIdleTime = 0);
 	void checkAutoLockIn(crl::time time);
@@ -438,7 +437,7 @@ private:
 	const std::unique_ptr<Lang::CloudManager> _langCloudManager;
 	const std::unique_ptr<ChatHelpers::EmojiKeywords> _emojiKeywords;
 	std::unique_ptr<Lang::Translator> _translator;
-	base::weak_qptr<Ui::BoxContent> _badProxyDisableBox;
+	QPointer<Ui::BoxContent> _badProxyDisableBox;
 
 	const std::unique_ptr<Tray> _tray;
 
@@ -447,13 +446,13 @@ private:
 	bool _floatPlayerGifsPaused = false;
 
 	rpl::variable<bool> _passcodeLock;
-	rpl::variable<bool> _setupEmailLock;
 	bool _screenIsLocked = false;
 
 	crl::time _shouldLockAt = 0;
 	base::Timer _autoLockTimer;
 
-	QList<QUrl> _urlsToOpen;
+	QStringList _filesToOpen;
+	base::Timer _fileOpenTimer;
 
 	std::optional<base::Timer> _saveSettingsTimer;
 

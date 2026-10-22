@@ -13,8 +13,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/unixtime.h"
 #include "boxes/peers/prepare_short_info_box.h"
 #include "boxes/report_messages_box.h"
-#include "calls/group/calls_group_call.h"
-#include "calls/group/calls_group_messages.h"
 #include "chat_helpers/compose/compose_show.h"
 #include "core/application.h"
 #include "core/click_handler_types.h"
@@ -23,14 +21,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/update_checker.h"
 #include "data/data_changes.h"
 #include "data/data_document.h"
-#include "data/data_group_call.h"
 #include "data/data_file_origin.h"
 #include "data/data_peer.h"
 #include "data/data_session.h"
 #include "data/data_stories.h"
-#include "history/view/controls/compose_controls_common.h"
 #include "history/view/reactions/history_view_reactions_strip.h"
-#include "history/view/history_view_paid_reaction_toast.h"
 #include "lang/lang_keys.h"
 #include "main/main_session.h"
 #include "media/stories/media_stories_caption_full_view.h"
@@ -46,12 +41,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "media/stories/media_stories_stealth.h"
 #include "media/stories/media_stories_view.h"
 #include "media/audio/media_audio.h"
-#include "info/stories/info_stories_common.h"
-#include "payments/payments_reaction_process.h"
 #include "settings/settings_credits_graphics.h"
 #include "ui/boxes/confirm_box.h"
 #include "ui/boxes/report_box_graphics.h"
-#include "ui/controls/send_button.h"
 #include "ui/text/text_utilities.h"
 #include "ui/toast/toast.h"
 #include "ui/widgets/buttons.h"
@@ -246,13 +238,13 @@ void Controller::Unsupported::setup(not_null<PeerData*> peer) {
 
 	_bg = std::make_unique<Ui::RpWidget>(wrap);
 	_bg->show();
-	_bg->paintRequest() | rpl::on_next([=] {
+	_bg->paintRequest() | rpl::start_with_next([=] {
 		auto p = QPainter(_bg.get());
 		_bgRound.paint(p, _bg->rect());
 	}, _bg->lifetime());
 
 	_controller->layoutValue(
-	) | rpl::on_next([=](const Layout &layout) {
+	) | rpl::start_with_next([=](const Layout &layout) {
 		_bg->setGeometry(layout.content);
 	}, _bg->lifetime());
 
@@ -273,7 +265,7 @@ void Controller::Unsupported::setup(not_null<PeerData*> peer) {
 		_controller->layoutValue(),
 		_text->sizeValue(),
 		_button->sizeValue()
-	) | rpl::on_next([=](
+	) | rpl::start_with_next([=](
 			const Layout &layout,
 			QSize text,
 			QSize button) {
@@ -304,13 +296,6 @@ Controller::Controller(not_null<Delegate*> delegate)
 , _replyArea(std::make_unique<ReplyArea>(this))
 , _reactions(std::make_unique<Reactions>(this))
 , _recentViews(std::make_unique<RecentViews>(this))
-, _paidReactionToast(std::make_unique<PaidReactionToast>(
-	_wrap,
-	&delegate->storiesShow()->session().data(),
-	paidReactionToastTopValue(),
-	[=](not_null<Calls::GroupCall*> call) {
-		return _videoStreamCall.get() == call;
-	}))
 , _weatherInCelsius(ResolveWeatherInCelsius()){
 	initLayout();
 
@@ -321,7 +306,7 @@ Controller::Controller(not_null<Delegate*> delegate)
 		_reactions->activeValue(),
 		_1 || _2
 	) | rpl::distinct_until_changed(
-	) | rpl::on_next([=](bool active) {
+	) | rpl::start_with_next([=](bool active) {
 		_replyActive = active;
 		updateContentFaded();
 	}, _lifetime);
@@ -334,14 +319,14 @@ Controller::Controller(not_null<Delegate*> delegate)
 	}
 
 	_reactions->chosen(
-	) | rpl::on_next([=](Reactions::Chosen chosen) {
+	) | rpl::start_with_next([=](Reactions::Chosen chosen) {
 		if (reactionChosen(chosen.mode, chosen.reaction)) {
 			_reactions->animateAndProcess(std::move(chosen));
 		}
 	}, _lifetime);
 
 	_delegate->storiesLayerShown(
-	) | rpl::on_next([=](bool shown) {
+	) | rpl::start_with_next([=](bool shown) {
 		if (_layerShown != shown) {
 			_layerShown = shown;
 			updatePlayingAllowed();
@@ -349,7 +334,7 @@ Controller::Controller(not_null<Delegate*> delegate)
 	}, _lifetime);
 
 	_header->tooltipShownValue(
-	) | rpl::on_next([=](bool shown) {
+	) | rpl::start_with_next([=](bool shown) {
 		if (_tooltipShown != shown) {
 			_tooltipShown = shown;
 			updatePlayingAllowed();
@@ -357,7 +342,7 @@ Controller::Controller(not_null<Delegate*> delegate)
 	}, _lifetime);
 
 	_wrap->windowActiveValue(
-	) | rpl::on_next([=](bool active) {
+	) | rpl::start_with_next([=](bool active) {
 		_windowActive = active;
 		updatePlayingAllowed();
 	}, _lifetime);
@@ -465,7 +450,7 @@ void Controller::initLayout() {
 				QSize(contentWidth, headerHeight));
 		}
 		layout.controlsWidth = std::max(
-			layout.content.width() + st::storiesControlsExtend * 2,
+			layout.content.width(),
 			st::storiesControlsMinWidth);
 		layout.controlsBottomPosition = QPoint(
 			(size.width() - layout.controlsWidth) / 2,
@@ -566,9 +551,6 @@ void Controller::rebuildActiveAreas(const Layout &layout) const {
 		area.radius = scale.width() * area.radiusOriginal / 100.;
 		if (const auto view = area.view.get()) {
 			view->setAreaGeometry(area.geometry, area.radius);
-			view->setContentRect(
-				layout.content,
-				st::storiesRadius);
 		}
 	}
 }
@@ -626,8 +608,7 @@ TextWithEntities Controller::captionText() const {
 }
 
 bool Controller::skipCaption() const {
-	return _videoStream
-		|| (_captionFullView != nullptr)
+	return (_captionFullView != nullptr)
 		|| (_captionText.empty() && !repost());
 }
 
@@ -677,18 +658,6 @@ bool Controller::reactionChosen(ReactionsMode mode, ChosenReaction chosen) {
 	return result;
 }
 
-rpl::producer<int> Controller::paidReactionToastTopValue() const {
-	return _layout.value(
-	) | rpl::map([](const std::optional<Layout> &layout) {
-		const auto base = !layout
-			? 0
-			: (layout->headerLayout == HeaderLayout::Normal)
-			? (layout->header.y() + layout->header.height())
-			: layout->content.y();
-		return base + st::storiesHeaderMargin.bottom();
-	});
-}
-
 void Controller::showFullCaption() {
 	if (_captionText.empty()) {
 		return;
@@ -734,25 +703,44 @@ void Controller::rebuildFromContext(
 	}, [&](StoriesContextPeer) {
 		source = stories.source(peerId);
 		hideSiblings();
-	}, [&](StoriesContextAlbum album) {
-		const auto known = stories.albumIdsCountKnown(peerId, album.id);
-		if (known) {
-			const auto &ids = stories.albumIds(peerId, album.id);
-			auto sorted = RespectingPinned(ids);
+	}, [&](StoriesContextSaved) {
+		if (stories.savedCountKnown(peerId)) {
+			const auto &saved = stories.saved(peerId);
+			auto sorted = RespectingPinned(saved);
 			const auto i = ranges::find(sorted, id);
 			const auto tillEnd = int(end(sorted) - i);
 			if (tillEnd > 0) {
 				_index = int(i - begin(sorted));
-				const auto total = stories.albumIdsCount(peerId, album.id);
 				list = StoriesList{
 					.peer = peer,
-					.ids = ids,
+					.ids = saved,
 					.sorted = std::move(sorted),
-					.total = total,
+					.total = stories.savedCount(peerId),
 				};
-				if (ids.list.size() < list->total
+				if (saved.list.size() < list->total
 					&& tillEnd < kPreloadStoriesCount) {
-					stories.albumIdsLoadMore(peerId, album.id);
+					stories.savedLoadMore(peerId);
+				}
+			}
+		}
+		hideSiblings();
+	}, [&](StoriesContextArchive) {
+		if (stories.archiveCountKnown(peerId)) {
+			const auto &archive = stories.archive(peerId);
+			auto sorted = RespectingPinned(archive);
+			const auto i = ranges::find(sorted, id);
+			const auto tillEnd = int(end(sorted) - i);
+			if (tillEnd > 0) {
+				_index = int(i - begin(sorted));
+				list = StoriesList{
+					.peer = peer,
+					.ids = archive,
+					.sorted = std::move(sorted),
+					.total = stories.archiveCount(peerId),
+				};
+				if (archive.list.size() < list->total
+					&& tillEnd < kPreloadStoriesCount) {
+					stories.archiveLoadMore(peerId);
 				}
 			}
 		}
@@ -822,7 +810,6 @@ void Controller::rebuildFromContext(
 	_slider->show({
 		.index = _sliderCount ? _sliderIndex : _index,
 		.total = _sliderCount ? _sliderCount : shownCount(),
-		.videoStream = videoStream(),
 	});
 }
 
@@ -860,28 +847,29 @@ void Controller::show(
 	_context = context;
 	_waitingForId = {};
 	_waitingForDelta = 0;
-	_videoStream = story->call();
-	if (!_videoStream) {
-		clearVideoStreamCall();
-	}
 
 	rebuildFromContext(peer, storyId);
 	_contextLifetime.destroy();
 	const auto subscribeToSource = [&] {
 		stories.sourceChanged() | rpl::filter(
 			rpl::mappers::_1 == storyId.peer
-		) | rpl::on_next([=] {
+		) | rpl::start_with_next([=] {
 			rebuildFromContext(peer, storyId);
 		}, _contextLifetime);
 	};
 	v::match(_context.data, [&](Data::StoriesContextSingle) {
 	}, [&](Data::StoriesContextPeer) {
 		subscribeToSource();
-	}, [&](Data::StoriesContextAlbum album) {
-		const auto key = Data::StoryAlbumIdsKey{ storyId.peer, album.id };
-		stories.albumIdsChanged() | rpl::filter(
-			rpl::mappers::_1 == key
-		) | rpl::on_next([=] {
+	}, [&](Data::StoriesContextSaved) {
+		stories.savedChanged() | rpl::filter(
+			rpl::mappers::_1 == storyId.peer
+		) | rpl::start_with_next([=] {
+			rebuildFromContext(peer, storyId);
+			checkMoveByDelta();
+		}, _contextLifetime);
+	}, [&](Data::StoriesContextArchive) {
+		stories.archiveChanged(
+		) | rpl::start_with_next([=] {
 			rebuildFromContext(peer, storyId);
 			checkMoveByDelta();
 		}, _contextLifetime);
@@ -925,19 +913,16 @@ void Controller::show(
 		.privacy = story->privacy(),
 		.edited = story->edited(),
 		.video = (document != nullptr),
-		.videoStream = videoStream(),
 		.silent = (document && document->isSilentVideo()),
-	}, _videoStream ? _videoStream->fullCountValue() : nullptr);
+	});
 	uiShow()->hideLayer(anim::type::instant);
 	if (!changeShown(story)) {
 		return;
 	}
 
-	clearVideoStreamCall();
 	_replyArea->show({
 		.peer = unsupported ? nullptr : peer.get(),
 		.id = story->id(),
-		.videoStream = _videoStream,
 	}, _reactions->likedValue());
 
 	const auto wasLikeButton = QPointer(_recentViews->likeButton());
@@ -947,10 +932,8 @@ void Controller::show(
 		.forwards = story->forwards(),
 		.views = story->views(),
 		.total = story->interactions(),
-		.type = RecentViewsTypeFor(peer, videoStream()),
-		.canViewReactions = (!_videoStream
-			&& CanViewReactionsFor(peer)
-			&& !peer->isMegagroup()),
+		.type = RecentViewsTypeFor(peer),
+		.canViewReactions = CanViewReactionsFor(peer) && !peer->isMegagroup(),
 	}, _reactions->likedValue());
 	if (const auto nowLikeButton = _recentViews->likeButton()) {
 		if (wasLikeButton != nowLikeButton) {
@@ -1027,13 +1010,13 @@ void Controller::subscribeToSession() {
 	}
 	_session->changes().storyUpdates(
 		Data::StoryUpdate::Flag::Destroyed
-	) | rpl::on_next([=](Data::StoryUpdate update) {
+	) | rpl::start_with_next([=](Data::StoryUpdate update) {
 		if (update.story->fullId() == _shown) {
 			_delegate->storiesClose();
 		}
 	}, _sessionLifetime);
 	_session->data().stories().itemsChanged(
-	) | rpl::on_next([=](PeerId peerId) {
+	) | rpl::start_with_next([=](PeerId peerId) {
 		if (_waitingForId.peer == peerId) {
 			checkWaitingFor();
 		}
@@ -1044,7 +1027,7 @@ void Controller::subscribeToSession() {
 		| Data::StoryUpdate::Flag::Reaction
 	) | rpl::filter([=](const Data::StoryUpdate &update) {
 		return (update.story == this->story());
-	}) | rpl::on_next([=](const Data::StoryUpdate &update) {
+	}) | rpl::start_with_next([=](const Data::StoryUpdate &update) {
 		if (update.flags & Data::StoryUpdate::Flag::Edited) {
 			show(update.story, _context);
 			_delegate->storiesRedisplay(update.story);
@@ -1056,10 +1039,8 @@ void Controller::subscribeToSession() {
 				.forwards = update.story->forwards(),
 				.views = update.story->views(),
 				.total = update.story->interactions(),
-				.type = RecentViewsTypeFor(peer, videoStream()),
-				.canViewReactions = (!_videoStream
-					&& CanViewReactionsFor(peer)
-					&& !peer->isMegagroup()),
+				.type = RecentViewsTypeFor(peer),
+				.canViewReactions = CanViewReactionsFor(peer) && !peer->isMegagroup(),
 			});
 			updateAreas(update.story);
 		}
@@ -1620,8 +1601,10 @@ void Controller::loadMoreToList() {
 	const auto peer = shownPeer();
 	const auto peerId = _shown.peer;
 	auto &stories = peer->owner().stories();
-	v::match(_context.data, [&](StoriesContextAlbum album) {
-		stories.albumIdsLoadMore(peerId, album.id);
+	v::match(_context.data, [&](StoriesContextSaved) {
+		stories.savedLoadMore(peerId);
+	}, [&](StoriesContextArchive) {
+		stories.archiveLoadMore(peerId);
 	}, [](const auto &) {
 	});
 }
@@ -1737,67 +1720,6 @@ void Controller::unfocusReply() {
 	_wrap->setFocus();
 }
 
-rpl::producer<CommentsState> Controller::commentsStateValue() const {
-	return _commentsState.value();
-}
-
-void Controller::setCommentsShownToggles(rpl::producer<> toggles) {
-	auto fromButton = std::move(
-		toggles
-	) | rpl::map([=] {
-		if (_commentsState.current() != CommentsState::Shown) {
-			_commentsLastReadId = _commentsLastId;
-			if (_commentsHas.current() == CommentsHas::WithUnread) {
-				_commentsHas = CommentsHas::AllRead;
-			}
-		}
-		return (_commentsState.current() == CommentsState::Shown)
-			? CommentsState::Hidden
-			: CommentsState::Shown;
-	});
-	auto fromUnread = _commentsHas.value(
-	) | rpl::map([=](CommentsHas value) {
-		const auto now = _commentsState.current();
-		return (value == CommentsHas::None)
-			? CommentsState::Empty
-			: (value == CommentsHas::WithUnread)
-			? CommentsState::WithNew
-			: (now == CommentsState::Shown || now == CommentsState::Empty)
-			? CommentsState::Shown
-			: CommentsState::Hidden;
-	});
-	_commentsState = rpl::merge(
-		std::move(fromButton),
-		std::move(fromUnread),
-		_commentsStateShowFromPinned.events());
-}
-
-auto Controller::starsReactionsValue() const
--> rpl::producer<Ui::SendStarButtonState> {
-	return rpl::combine(
-		_starsReactions.value(),
-		_starsReactionHighlighted.value()
-	) | rpl::map([=](int stars, bool highlighted) {
-		return Ui::SendStarButtonState{ stars, highlighted };
-	});
-}
-
-auto Controller::starsReactionsEffects() const
--> rpl::producer<SendStarButtonEffect> {
-	return _starsReactionEffects.events();
-}
-
-void Controller::setStarsReactionIncrements(rpl::producer<int> increments) {
-	std::move(
-		increments
-	) | rpl::on_next([=](int count) {
-		if (const auto call = _videoStreamCall.get()) {
-			const auto show = _delegate->storiesShow();
-			Payments::TryAddingPaidReaction(call, count, show);
-		}
-	}, _videoStreamLifetime);
-}
-
 void Controller::shareRequested() {
 	const auto show = _delegate->storiesShow();
 	if (auto box = PrepareShareBox(show, _shown, true)) {
@@ -1841,10 +1763,7 @@ void Controller::toggleInProfileRequested(bool inProfile) {
 	if (!story || !story->peer()->isSelf()) {
 		return;
 	}
-	if (!inProfile
-		&& v::is<Data::StoriesContextAlbum>(_context.data)
-		&& (v::get<Data::StoriesContextAlbum>(_context.data).id
-			!= Data::kStoriesAlbumIdArchive)) {
+	if (!inProfile && v::is<Data::StoriesContextSaved>(_context.data)) {
 		moveFromShown();
 	}
 	story->owner().stories().toggleInProfileList(
@@ -1887,82 +1806,6 @@ auto Controller::attachReactionsToMenu(
 	return _reactions->attachToMenu(menu, desiredPosition);
 }
 
-void Controller::updateVideoStream(not_null<Calls::GroupCall*> videoStream) {
-	_videoStreamCall = videoStream;
-
-	using namespace Calls::Group;
-	videoStream->messages()->listValue(
-	) | rpl::on_next([=](const std::vector<Message> &messages) {
-		if (_commentsState.current() == CommentsState::Shown
-			|| _commentsState.current() == CommentsState::Empty) {
-			for (const auto &message : messages | ranges::views::reverse) {
-				if (message.id > 0) {
-					_commentsLastId = _commentsLastReadId = message.id;
-					break;
-				}
-			}
-			_commentsHas = messages.empty()
-				? CommentsHas::None
-				: CommentsHas::AllRead;
-			return;
-		}
-		auto has = false;
-		const auto from = videoStream->messagesFrom();
-		for (const auto &message : messages | ranges::views::reverse) {
-			if (message.peer != from) {
-				_commentsLastId = message.id;
-				if (message.id > _commentsLastReadId) {
-					has = true;
-				}
-				break;
-			}
-		}
-		_commentsHas = messages.empty()
-			? CommentsHas::None
-			: has
-			? CommentsHas::WithUnread
-			: CommentsHas::AllRead;
-	}, _videoStreamLifetime);
-
-	videoStream->messages()->hiddenShowRequested(
-	) | rpl::filter([=] {
-		return _commentsState.current() != CommentsState::Empty;
-	}) | rpl::map_to(
-		CommentsState::Shown
-	) | rpl::start_to_stream(
-		_commentsStateShowFromPinned,
-		_videoStreamLifetime);
-
-	_starsReactions = rpl::single(Calls::Group::StarsDonor()) | rpl::then(
-		videoStream->messages()->starsValueChanges()
-	) | rpl::map([=](const Calls::Group::StarsDonor &donor) {
-		if (const auto peer = donor.peer) {
-			_starsReactionEffects.fire({
-				.from = peer,
-				.stars = donor.stars,
-			});
-		}
-		return videoStream->messages()->starsLocalState().total;
-	});
-	_paidReactionToast->shownForCall(
-	) | rpl::on_next([=](Calls::GroupCall *call) {
-		_starsReactionHighlighted = (call == videoStream);
-	}, _videoStreamLifetime);
-
-	_replyArea->updateVideoStream(videoStream);
-}
-
-void Controller::clearVideoStreamCall() {
-	_videoStreamCall = nullptr;
-	_starsReactionHighlighted = false;
-	_starsReactions = 0;
-	_videoStreamLifetime.destroy();
-}
-
-bool Controller::videoStream() const {
-	return _videoStream != nullptr;
-}
-
 rpl::lifetime &Controller::lifetime() {
 	return _lifetime;
 }
@@ -1989,14 +1832,14 @@ Ui::Toast::Config PrepareToggleInProfileToast(
 					? tr::lng_stories_channel_save_done
 					: tr::lng_stories_save_done)(
 						tr::now,
-						tr::bold)
+						Ui::Text::Bold)
 				: (channel
 					? tr::lng_stories_channel_save_done_many
 					: tr::lng_stories_save_done_many)(
 						tr::now,
 						lt_count,
 						count,
-						tr::bold)).append(
+						Ui::Text::Bold)).append(
 							'\n').append((channel
 								? tr::lng_stories_channel_save_done_about
 								: tr::lng_stories_save_done_about)(tr::now))
@@ -2005,14 +1848,14 @@ Ui::Toast::Config PrepareToggleInProfileToast(
 					? tr::lng_stories_channel_archive_done
 					: tr::lng_stories_archive_done)(
 						tr::now,
-						tr::marked)
+						Ui::Text::WithEntities)
 				: (channel
 					? tr::lng_stories_channel_archive_done_many
 					: tr::lng_stories_archive_done_many)(
 						tr::now,
 						lt_count,
 						count,
-						tr::marked))),
+						Ui::Text::WithEntities))),
 		.st = &st::storiesActionToast,
 		.duration = (inProfile
 			? Data::Stories::kInProfileToastDuration

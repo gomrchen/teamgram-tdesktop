@@ -404,15 +404,12 @@ void SendingAlbum::removeItem(not_null<HistoryItem*> item) {
 	Assert(i != end(items));
 	items.erase(i);
 	if (moveCaption) {
-		auto caption = item->originalText();
+		const auto caption = item->originalText();
 		const auto firstId = items.front().msgId;
 		if (const auto first = item->history()->owner().message(firstId)) {
 			// We don't need to finishEdition() here, because the whole
 			// album will be rebuilt after one item was removed from it.
-			auto firstCaption = first->originalText();
-			first->setText(firstCaption.text.isEmpty()
-				? std::move(caption)
-				: firstCaption.append('\n').append(std::move(caption)));
+			first->setText(caption);
 			refreshMediaCaption(first);
 		}
 	}
@@ -466,39 +463,55 @@ std::shared_ptr<FilePrepareResult> MakePreparedFile(
 	return std::make_shared<FilePrepareResult>(std::move(descriptor));
 }
 
-FileLoadTask::FileLoadTask(Args &&args)
-: _id(args.idOverride ? args.idOverride : base::RandomValue<uint64>())
-, _session(args.session)
-, _dcId(args.session->mainDcId())
-, _to(std::move(args.to))
-, _album(std::move(args.album))
-, _filepath(std::move(args.filepath))
-, _displayName(std::move(args.displayName))
-, _content(std::move(args.content))
-, _videoCover(std::move(args.videoCover))
-, _information(std::move(args.information))
-, _type(args.type)
-, _caption(std::move(args.caption))
-, _spoiler(args.spoiler)
-, _forceFile(args.forceFile) {
-	Expects(_to.options.scheduled
-		|| _to.options.shortcutId
-		|| !_to.replaceMediaOf
-		|| IsServerMsgId(_to.replaceMediaOf));
+FileLoadTask::FileLoadTask(
+	not_null<Main::Session*> session,
+	const QString &filepath,
+	const QByteArray &content,
+	std::unique_ptr<Ui::PreparedFileInformation> information,
+	std::unique_ptr<FileLoadTask> videoCover,
+	SendMediaType type,
+	const FileLoadTo &to,
+	const TextWithTags &caption,
+	bool spoiler,
+	std::shared_ptr<SendingAlbum> album,
+	uint64 idOverride)
+: _id(idOverride ? idOverride : base::RandomValue<uint64>())
+, _session(session)
+, _dcId(session->mainDcId())
+, _to(to)
+, _album(std::move(album))
+, _filepath(filepath)
+, _content(content)
+, _videoCover(std::move(videoCover))
+, _information(std::move(information))
+, _type(type)
+, _caption(caption)
+, _spoiler(spoiler) {
+	Expects(to.options.scheduled
+		|| to.options.shortcutId
+		|| !to.replaceMediaOf
+		|| IsServerMsgId(to.replaceMediaOf));
 
 	SendLargePhotosAtomic = SendLargePhotos.value();
 }
 
-FileLoadTask::FileLoadTask(VoiceArgs &&args)
+FileLoadTask::FileLoadTask(
+	not_null<Main::Session*> session,
+	const QByteArray &voice,
+	crl::time duration,
+	const VoiceWaveform &waveform,
+	bool video,
+	const FileLoadTo &to,
+	const TextWithTags &caption)
 : _id(base::RandomValue<uint64>())
-, _session(args.session)
-, _dcId(args.session->mainDcId())
-, _to(std::move(args.to))
-, _content(std::move(args.voice))
-, _duration(args.duration)
-, _waveform(std::move(args.waveform))
-, _type(args.video ? SendMediaType::Round : SendMediaType::Audio)
-, _caption(std::move(args.caption)) {
+, _session(session)
+, _dcId(session->mainDcId())
+, _to(to)
+, _content(voice)
+, _duration(duration)
+, _waveform(waveform)
+, _type(video ? SendMediaType::Round : SendMediaType::Audio)
+, _caption(caption) {
 }
 
 FileLoadTask::~FileLoadTask() = default;
@@ -668,7 +681,7 @@ bool FileLoadTask::FillImageInformation(
 	return true;
 }
 
-void FileLoadTask::process(ProcessArgs &&args) {
+void FileLoadTask::process(Args &&args) {
 	_result = MakePreparedFile({
 		.taskId = id(),
 		.id = _id,
@@ -811,11 +824,7 @@ void FileLoadTask::process(ProcessArgs &&args) {
 	QImage goodThumbnail;
 	QByteArray goodThumbnailBytes;
 
-	auto attributes = QVector<MTPDocumentAttribute>(
-		1,
-		MTP_documentAttributeFilename(MTP_string(_displayName.isEmpty()
-			? filename
-			: _displayName)));
+	QVector<MTPDocumentAttribute> attributes(1, MTP_documentAttributeFilename(MTP_string(filename)));
 
 	auto thumbnail = PreparedFileThumbnail();
 
@@ -873,24 +882,22 @@ void FileLoadTask::process(ProcessArgs &&args) {
 			isVideo = true;
 			auto coverWidth = video->thumbnail.width();
 			auto coverHeight = video->thumbnail.height();
-			if (!_forceFile) {
-				if (video->isGifv && !_album) {
-					attributes.push_back(MTP_documentAttributeAnimated());
-				}
-				auto flags = MTPDdocumentAttributeVideo::Flags(0);
-				if (video->supportsStreaming) {
-					flags |= MTPDdocumentAttributeVideo::Flag::f_supports_streaming;
-				}
-				const auto realSeconds = video->duration / 1000.;
-				attributes.push_back(MTP_documentAttributeVideo(
-					MTP_flags(flags),
-					MTP_double(realSeconds),
-					MTP_int(coverWidth),
-					MTP_int(coverHeight),
-					MTPint(),
-					MTPdouble(),
-					MTPstring()));
+			if (video->isGifv && !_album) {
+				attributes.push_back(MTP_documentAttributeAnimated());
 			}
+			auto flags = MTPDdocumentAttributeVideo::Flags(0);
+			if (video->supportsStreaming) {
+				flags |= MTPDdocumentAttributeVideo::Flag::f_supports_streaming;
+			}
+			const auto realSeconds = video->duration / 1000.;
+			attributes.push_back(MTP_documentAttributeVideo(
+				MTP_flags(flags),
+				MTP_double(realSeconds),
+				MTP_int(coverWidth),
+				MTP_int(coverHeight),
+				MTPint(), // preload_prefix_size
+				MTPdouble(), // video_start_ts
+				MTPstring())); // video_codec
 
 			if (args.generateGoodThumbnail) {
 				goodThumbnail = video->thumbnail;
@@ -1052,7 +1059,6 @@ void FileLoadTask::process(ProcessArgs &&args) {
 	_result->photo = photo;
 	_result->document = document;
 	_result->photoThumbs = photoThumbs;
-	_result->forceFile = _forceFile;
 }
 
 void FileLoadTask::finish() {

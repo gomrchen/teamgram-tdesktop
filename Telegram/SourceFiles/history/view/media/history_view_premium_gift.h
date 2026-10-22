@@ -29,10 +29,9 @@ public:
 	int width() override;
 	QSize size() override;
 	TextWithEntities title() override;
-	TextWithEntities author() override;
 	TextWithEntities subtitle() override;
 	rpl::producer<QString> button() override;
-	std::optional<Ui::Premium::MiniStarsType> buttonMinistars() override;
+	bool buttonMinistars() override;
 	QImage cornerTag(const PaintContext &context) override;
 	int buttonSkip() override;
 	void draw(
@@ -40,7 +39,6 @@ public:
 		const PaintContext &context,
 		const QRect &geometry) override;
 	ClickHandlerPtr createViewLink() override;
-	ClickHandlerPtr authorLink() override;
 
 	bool hideServiceText() override;
 	void stickerClearLoopPlayed() override;
@@ -54,20 +52,16 @@ public:
 private:
 	[[nodiscard]] bool incomingGift() const;
 	[[nodiscard]] bool outgoingGift() const;
-	[[nodiscard]] bool tonGift() const;
 	[[nodiscard]] bool starGift() const;
 	[[nodiscard]] bool starGiftUpgrade() const;
 	[[nodiscard]] bool gift() const;
 	[[nodiscard]] bool creditsPrize() const;
 	[[nodiscard]] int credits() const;
-	[[nodiscard]] int premiumDays() const;
-	[[nodiscard]] int premiumMonths() const;
 	void ensureStickerCreated() const;
 
 	const not_null<Element*> _parent;
 	const not_null<Data::MediaGiftBox*> _gift;
 	const Data::GiftCode &_data;
-	ClickHandlerPtr _authorLink;
 	QImage _badgeCache;
 	Info::PeerGifts::GiftBadge _badgeKey;
 	mutable std::optional<Sticker> _sticker;

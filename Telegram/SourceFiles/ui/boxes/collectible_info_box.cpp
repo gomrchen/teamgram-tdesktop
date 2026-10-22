@@ -21,7 +21,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/painter.h"
 #include "settings/settings_common.h"
 #include "styles/style_boxes.h"
-#include "styles/style_credits.h"
 #include "styles/style_layers.h"
 
 #include <QtCore/QRegularExpression>
@@ -48,14 +47,16 @@ constexpr auto kTonMultiplier = uint64(1000000000);
 	return langDateTime(base::unixtime::parse(date));
 }
 
-[[nodiscard]] TextWithEntities FormatPrice(const CollectibleInfo &info) {
+[[nodiscard]] TextWithEntities FormatPrice(
+		const CollectibleInfo &info,
+		const CollectibleDetails &details) {
 	auto minor = Info::ChannelEarn::MinorPart(info.cryptoAmount);
 	if (minor.size() == 1 && minor.at(0) == '.') {
 		minor += '0';
 	}
 	auto price = (info.cryptoCurrency == u"TON"_q)
-		? Ui::Text::IconEmoji(
-			&st::tonIconEmoji
+		? base::duplicate(
+			details.tonEmoji
 		).append(
 			Info::ChannelEarn::MajorPart(info.cryptoAmount)
 		).append(minor)
@@ -82,7 +83,7 @@ constexpr auto kTonMultiplier = uint64(1000000000);
 	const auto nameWidth = st->style.font->width(name);
 	const auto added = size + st->padding.left() + st->padding.right();
 	const auto subscribed = std::make_shared<bool>(false);
-	raw->paintRequest() | rpl::on_next([=] {
+	raw->paintRequest() | rpl::start_with_next([=] {
 		const auto use = std::min(nameWidth + added, raw->width());
 		const auto x = (raw->width() - use) / 2;
 		if (const auto available = use - added; available > 0) {
@@ -122,7 +123,8 @@ CollectibleType DetectCollectibleType(const QString &entity) {
 
 void CollectibleInfoBox(
 		not_null<Ui::GenericBox*> box,
-		CollectibleInfo info) {
+		CollectibleInfo info,
+		CollectibleDetails details) {
 	box->setWidth(st::boxWideWidth);
 	box->setStyle(st::collectibleBox);
 
@@ -132,7 +134,7 @@ void CollectibleInfoBox(
 		object_ptr<Ui::FixedHeightWidget>(box, st::collectibleIconDiameter),
 		st::collectibleIconPadding);
 	icon->paintRequest(
-	) | rpl::on_next([=](QRect clip) {
+	) | rpl::start_with_next([=](QRect clip) {
 		const auto size = icon->height();
 		const auto inner = QRect(
 			(icon->width() - size) / 2,
@@ -160,11 +162,11 @@ void CollectibleInfoBox(
 		},
 		QMargins());
 	box->showFinishes(
-	) | rpl::on_next([animate = std::move(lottie.animate)] {
+	) | rpl::start_with_next([animate = std::move(lottie.animate)] {
 		animate(anim::repeat::once);
 	}, box->lifetime());
 	const auto animation = lottie.widget.release();
-	icon->sizeValue() | rpl::on_next([=](QSize size) {
+	icon->sizeValue() | rpl::start_with_next([=](QSize size) {
 		const auto skip = (type == CollectibleType::Phone)
 			? style::ConvertScale(2)
 			: 0;
@@ -178,13 +180,13 @@ void CollectibleInfoBox(
 		? tr::lng_collectible_phone_title(
 			tr::now,
 			lt_phone,
-			tr::link(formatted),
-			tr::marked)
+			Ui::Text::Link(formatted),
+			Ui::Text::WithEntities)
 		: tr::lng_collectible_username_title(
 			tr::now,
 			lt_username,
-			tr::link(formatted),
-			tr::marked);
+			Ui::Text::Link(formatted),
+			Ui::Text::WithEntities);
 	const auto copyCallback = [box, type, formatted, text = info.copyText](
 			bool copyLink) {
 		QGuiApplication::clipboard()->setText((text.isEmpty() || !copyLink)
@@ -201,8 +203,7 @@ void CollectibleInfoBox(
 			box,
 			rpl::single(header),
 			st::collectibleHeader),
-		st::collectibleHeaderPadding,
-		style::al_top
+		st::collectibleHeaderPadding
 	)->setClickHandlerFilter([copyCallback](const auto &...) {
 		copyCallback(false);
 		return false;
@@ -217,14 +218,15 @@ void CollectibleInfoBox(
 			lt_date,
 			TextWithEntities{ FormatDate(info.date) },
 			lt_price,
-			FormatPrice(info),
-			tr::rich);
+			FormatPrice(info, details),
+			Ui::Text::RichLangValue);
 	const auto label = box->addRow(
 		object_ptr<Ui::FlatLabel>(box, st::collectibleInfo),
-		st::collectibleInfoPadding,
-		style::al_top);
+		st::collectibleInfoPadding);
 	label->setAttribute(Qt::WA_TransparentForMouseEvents);
-	label->setMarkedText(text);
+	auto context = details.tonEmojiContext;
+	context.repaint = [label] { label->update(); };
+	label->setMarkedText(text, context);
 
 	const auto more = box->addRow(
 		object_ptr<Ui::RoundButton>(
@@ -260,11 +262,11 @@ void CollectibleInfoBox(
 		box->closeBox();
 	});
 	box->widthValue(
-	) | rpl::on_next([=](int width) {
+	) | rpl::start_with_next([=](int width) {
 		close->moveToRight(0, 0);
 	}, box->lifetime());
 
-	box->widthValue() | rpl::on_next([=](int width) {
+	box->widthValue() | rpl::start_with_next([=](int width) {
 		more->setFullWidth(width
 			- st::collectibleMorePadding.left()
 			- st::collectibleMorePadding.right());

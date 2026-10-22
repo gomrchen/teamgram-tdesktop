@@ -28,10 +28,6 @@ void PaintOutlineSegments(
 	float64 radius,
 	const std::vector<OutlineSegment> &segments);
 
-[[nodiscard]] QLinearGradient UnreadStoryOutlineGradient(
-	QRectF rect,
-	const QColor &c1,
-	const QColor &c2);
 [[nodiscard]] QLinearGradient UnreadStoryOutlineGradient(QRectF rect = {});
 
 } // namespace Ui

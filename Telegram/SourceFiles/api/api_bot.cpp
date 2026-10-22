@@ -10,7 +10,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "apiwrap.h"
 #include "api/api_cloud_password.h"
 #include "api/api_send_progress.h"
-#include "api/api_suggest_post.h"
 #include "boxes/share_box.h"
 #include "boxes/passcode_box.h"
 #include "boxes/url_auth_box.h"
@@ -91,7 +90,7 @@ void SendBotCallbackData(
 	const auto show = controller->uiShow();
 	button->requestId = api->request(MTPmessages_GetBotCallbackAnswer(
 		MTP_flags(flags),
-		history->peer->input(),
+		history->peer->input,
 		MTP_int(item->id),
 		MTP_bytes(sendData),
 		password ? password->result : MTP_inputCheckPasswordEmpty()
@@ -218,7 +217,7 @@ void SendBotCallbackDataWithPassword(
 			session,
 			tr::lng_bots_password_confirm_check_about(
 				tr::now,
-				tr::marked));
+				Ui::Text::WithEntities));
 		if (box) {
 			show->showBox(std::move(box), Ui::LayerOption::CloseOther);
 		} else {
@@ -227,7 +226,7 @@ void SendBotCallbackDataWithPassword(
 			api->cloudPassword().state(
 			) | rpl::take(
 				1
-			) | rpl::on_next([=](const Core::CloudPasswordState &state) mutable {
+			) | rpl::start_with_next([=](const Core::CloudPasswordState &state) mutable {
 				if (lifetime) {
 					base::take(lifetime)->destroy();
 				}
@@ -245,7 +244,7 @@ void SendBotCallbackDataWithPassword(
 				fields.customSubmitButton = tr::lng_passcode_submit();
 				fields.customCheckCallback = [=](
 						const Core::CloudPasswordResult &result,
-						base::weak_qptr<PasscodeBox> box) {
+						QPointer<PasscodeBox> box) {
 					if (const auto button = getButton()) {
 						if (button->requestId) {
 							return;
@@ -400,12 +399,10 @@ void ActivateBotCommand(ClickHandlerContext context, int row, int column) {
 			}
 		}
 		const auto replyTo = FullReplyTo();
-		const auto suggest = SuggestOptions();
 		Window::PeerMenuCreatePoll(
 			controller,
 			item->history()->peer,
 			replyTo,
-			suggest,
 			chosen,
 			disabled);
 	} break;
@@ -421,13 +418,13 @@ void ActivateBotCommand(ClickHandlerContext context, int row, int column) {
 		const auto id = int32(button->buttonId);
 		const auto chosen = [=](std::vector<not_null<PeerData*>> result) {
 			peer->session().api().request(MTPmessages_SendBotRequestedPeer(
-				peer->input(),
+				peer->input,
 				MTP_int(itemId),
 				MTP_int(id),
 				MTP_vector_from_range(
 					result | ranges::views::transform([](
 							not_null<PeerData*> peer) {
-						return MTPInputPeer(peer->input());
+						return MTPInputPeer(peer->input);
 					}))
 			)).done([=](const MTPUpdates &result) {
 				peer->session().api().applyUpdates(result);
@@ -482,7 +479,7 @@ void ActivateBotCommand(ClickHandlerContext context, int row, int column) {
 	} break;
 
 	case ButtonType::Auth:
-		UrlAuthBox::ActivateButton(controller->uiShow(), item, row, column);
+		UrlAuthBox::Activate(item, row, column);
 		break;
 
 	case ButtonType::UserProfile: {
@@ -521,27 +518,6 @@ void ActivateBotCommand(ClickHandlerContext context, int row, int column) {
 			QGuiApplication::clipboard()->setText(text);
 			controller->showToast(tr::lng_text_copied(tr::now));
 		}
-	} break;
-
-	case ButtonType::SuggestAccept: {
-		Api::AcceptClickHandler(item)->onClick(ClickContext{
-			Qt::LeftButton,
-			QVariant::fromValue(context),
-		});
-	} break;
-
-	case ButtonType::SuggestDecline: {
-		Api::DeclineClickHandler(item)->onClick(ClickContext{
-			Qt::LeftButton,
-			QVariant::fromValue(context),
-		});
-	} break;
-
-	case ButtonType::SuggestChange: {
-		Api::SuggestChangesClickHandler(item)->onClick(ClickContext{
-			Qt::LeftButton,
-			QVariant::fromValue(context),
-		});
 	} break;
 	}
 }

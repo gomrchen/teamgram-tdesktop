@@ -32,6 +32,7 @@ public:
 enum LogDataType {
 	LogDataMain,
 	LogDataDebug,
+	LogDataTcp,
 	LogDataMtp,
 
 	LogDataCount
@@ -53,6 +54,7 @@ QString _logsFilePath(LogDataType type, const QString &postfix = QString()) {
 	switch (type) {
 	case LogDataMain: path += u"log"_q + postfix + u".txt"_q; break;
 	case LogDataDebug: path += u"DebugLogs/log"_q + postfix + u".txt"_q; break;
+	case LogDataTcp: path += u"DebugLogs/tcp"_q + postfix + u".txt"_q; break;
 	case LogDataMtp: path += u"DebugLogs/mtp"_q + postfix + u".txt"_q; break;
 	}
 	return path;
@@ -144,48 +146,36 @@ private:
 			if (postfix.isEmpty()) { // instance checked, need to move to log.txt
 				Assert(!files[type]->fileName().isEmpty()); // one of log_startXX.txt should've been opened already
 
-				const auto startName = files[type]->fileName();
-				const auto targetName = _logsFilePath(type, postfix);
-
-				auto target = QFile(targetName);
-				if (target.exists() && !target.remove()) {
-					LOG(("Could not delete '%1' file to start new logging: %2").arg(targetName, target.errorString()));
+				auto to = std::make_unique<QFile>(_logsFilePath(type, postfix));
+				if (to->exists() && !to->remove()) {
+					LOG(("Could not delete '%1' file to start new logging: %2").arg(to->fileName(), to->errorString()));
 					return false;
 				}
+				if (auto from = QFile(files[type]->fileName()); !from.copy(to->fileName())) { // don't close files[type] yet
+					LOG(("Could not copy '%1' to '%2' to start new logging: %3").arg(files[type]->fileName(), to->fileName(), from.errorString()));
+					return false;
+				}
+				if (to->open(mode | QIODevice::Append)) {
+					std::swap(files[type], to);
+					LOG(("Moved logging from '%1' to '%2'!").arg(to->fileName(), files[type]->fileName()));
+					to->remove();
 
-				files[type]->close();
+					LogsStartIndexChosen = -1;
 
-				const auto reopenStart = [&](const QString &name) {
-					files[type]->setFileName(name);
-					return files[type]->open(mode | QIODevice::Append);
-				};
-
-				auto source = QFile(startName);
-				if (!source.rename(targetName)) {
-					if (reopenStart(startName)) {
-						LOG(("Could not rename '%1' to '%2' to start new logging: %3").arg(startName, targetName, source.errorString()));
+					QDir working(cWorkingDir()); // delete all other log_startXX.txt that we can
+					QStringList oldlogs = working.entryList(QStringList("log_start*.txt"), QDir::Files);
+					for (QStringList::const_iterator i = oldlogs.cbegin(), e = oldlogs.cend(); i != e; ++i) {
+						QString oldlog = cWorkingDir() + *i, oldlogend = i->mid(u"log_start"_q.size());
+						if (oldlogend.size() == 1 + u".txt"_q.size() && oldlogend.at(0).isDigit() && base::StringViewMid(oldlogend, 1) == u".txt"_q) {
+							bool removed = QFile(oldlog).remove();
+							LOG(("Old start log '%1' found, deleted: %2").arg(*i, Logs::b(removed)));
+						}
 					}
-					return false;
-				}
-				if (!reopenStart(targetName)) {
-					LOG(("Could not open '%1' file to start new logging: %2").arg(targetName, files[type]->errorString()));
-					return false;
-				}
-				LOG(("Moved logging from '%1' to '%2'!").arg(startName, files[type]->fileName()));
 
-				LogsStartIndexChosen = -1;
-
-				QDir working(cWorkingDir()); // delete all other log_startXX.txt that we can
-				QStringList oldlogs = working.entryList(QStringList("log_start*.txt"), QDir::Files);
-				for (QStringList::const_iterator i = oldlogs.cbegin(), e = oldlogs.cend(); i != e; ++i) {
-					QString oldlog = cWorkingDir() + *i, oldlogend = i->mid(u"log_start"_q.size());
-					if (oldlogend.size() == 1 + u".txt"_q.size() && oldlogend.at(0).isDigit() && base::StringViewMid(oldlogend, 1) == u".txt"_q) {
-						bool removed = QFile(oldlog).remove();
-						LOG(("Old start log '%1' found, deleted: %2").arg(*i, Logs::b(removed)));
-					}
+					return true;
 				}
-
-				return true;
+				LOG(("Could not open '%1' file to start new logging: %2").arg(to->fileName(), to->errorString()));
+				return false;
 			} else {
 				bool found = false;
 				int32 oldest = -1; // find not existing log_startX.txt or pick the oldest one (by lastModified)
@@ -255,6 +245,7 @@ NEW LOGGING INSTANCE STARTED!!!\n\
 		QString postfix = QString("_%4_%5").arg((part * switchEach) / 60, 2, 10, QChar('0')).arg((part * switchEach) % 60, 2, 10, QChar('0'));
 
 		reopen(LogDataDebug, dayIndex, postfix);
+		reopen(LogDataTcp, dayIndex, postfix);
 		reopen(LogDataMtp, dayIndex, postfix);
 	}
 
@@ -527,6 +518,11 @@ void writeDebug(const QString &v) {
 #elif defined _DEBUG
 	//std::cout << msg.toUtf8().constData();
 #endif
+}
+
+void writeTcp(const QString &v) {
+	const auto msg = QString("%1 %2\n").arg(_logsEntryStart(), v);
+	_logsWrite(LogDataTcp, msg);
 }
 
 void writeMtp(int32 dc, const QString &v) {

@@ -16,11 +16,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 class ChannelData;
 
-namespace Data {
-class Forum;
-class SavedMessages;
-} // namespace Data
-
 struct ChannelLocation {
 	QString address;
 	Data::LocationPoint point;
@@ -78,14 +73,6 @@ enum class ChannelDataFlag : uint64 {
 	SignatureProfiles = (1ULL << 35),
 	StargiftsAvailable = (1ULL << 36),
 	PaidMessagesAvailable = (1ULL << 37),
-	AutoTranslation = (1ULL << 38),
-	Monoforum = (1ULL << 39),
-	MonoforumAdmin = (1ULL << 40),
-	MonoforumDisabled = (1ULL << 41),
-	ForumTabs = (1ULL << 42),
-	HasStarsPerMessage = (1ULL << 43),
-	StarsPerMessageKnown = (1ULL << 44),
-	HasActiveVideoStream = (1ULL << 45),
 };
 inline constexpr bool is_flag_type(ChannelDataFlag) { return true; };
 using ChannelDataFlags = base::flags<ChannelDataFlag>;
@@ -130,10 +117,6 @@ public:
 	[[nodiscard]] Data::Forum *forum() const;
 	[[nodiscard]] std::unique_ptr<Data::Forum> takeForumData();
 
-	void ensureMonoforum(not_null<ChannelData*> that);
-	[[nodiscard]] Data::SavedMessages *monoforum() const;
-	[[nodiscard]] std::unique_ptr<Data::SavedMessages> takeMonoforumData();
-
 	std::deque<not_null<UserData*>> lastParticipants;
 	base::flat_map<not_null<UserData*>, Admin> lastAdmins;
 	base::flat_map<not_null<UserData*>, Restricted> lastRestricted;
@@ -141,10 +124,11 @@ public:
 	base::flat_set<not_null<UserData*>> bots;
 	rpl::event_stream<bool> unrestrictedByBoostsChanges;
 
-	base::flat_set<UserId> admins;
-	base::flat_map<UserId, QString> memberRanks;
+	// For admin badges, full admins list with ranks.
+	base::flat_map<UserId, QString> admins;
 
 	UserData *creator = nullptr; // nullptr means unknown
+	QString creatorRank;
 	int botStatus = 0; // -1 - no bots, 0 - unknown, 1 - one bot, that sees all history, 2 - other
 	bool joinedMessageFound = false;
 	bool adminsLoaded = false;
@@ -169,7 +153,7 @@ private:
 	ChannelLocation _location;
 	Data::ChatBotCommands _botCommands;
 	std::unique_ptr<Data::Forum> _forum;
-	std::unique_ptr<Data::SavedMessages> _monoforum;
+	int _starsPerMessage = 0;
 
 	friend class ChannelData;
 
@@ -193,10 +177,6 @@ public:
 	void setUsername(const QString &username);
 	void setUsernames(const Data::Usernames &newUsernames);
 	void setPhoto(const MTPChatPhoto &photo);
-
-	[[nodiscard]] uint64 accessHash() const {
-		return _accessHash;
-	}
 	void setAccessHash(uint64 accessHash);
 
 	void setFlags(ChannelDataFlags which);
@@ -286,13 +266,6 @@ public:
 	[[nodiscard]] bool paidMessagesAvailable() const {
 		return flags() & Flag::PaidMessagesAvailable;
 	}
-	[[nodiscard]] bool hasStarsPerMessage() const {
-		return flags() & Flag::HasStarsPerMessage;
-	}
-	[[nodiscard]] bool starsPerMessageKnown() const {
-		return flags() & Flag::StarsPerMessageKnown;
-	}
-	[[nodiscard]] bool useSubsectionTabs() const;
 
 	[[nodiscard]] static ChatRestrictionsInfo KickedRestrictedRights(
 		not_null<PeerData*> participant);
@@ -304,9 +277,6 @@ public:
 		not_null<UserData*> user,
 		ChatAdminRightsInfo oldRights,
 		ChatAdminRightsInfo newRights,
-		const QString &rank);
-	void applyEditMemberRank(
-		not_null<UserData*> user,
 		const QString &rank);
 	void applyEditBanned(
 		not_null<PeerData*> participant,
@@ -330,9 +300,6 @@ public:
 	[[nodiscard]] bool isForum() const {
 		return flags() & Flag::Forum;
 	}
-	[[nodiscard]] bool isMonoforum() const {
-		return flags() & Flag::Monoforum;
-	}
 	[[nodiscard]] bool hasUsername() const {
 		return flags() & Flag::Username;
 	}
@@ -354,9 +321,7 @@ public:
 	[[nodiscard]] bool antiSpamMode() const {
 		return flags() & Flag::AntiSpam;
 	}
-	[[nodiscard]] bool autoTranslation() const {
-		return flags() & Flag::AutoTranslation;
-	}
+
 	[[nodiscard]] auto adminRights() const {
 		return _adminRights.current();
 	}
@@ -412,13 +377,11 @@ public:
 	[[nodiscard]] bool canEditStories() const;
 	[[nodiscard]] bool canDeleteStories() const;
 	[[nodiscard]] bool canPostPaidMedia() const;
-	[[nodiscard]] bool canAccessMonoforum() const;
 	[[nodiscard]] bool hiddenPreHistory() const;
 	[[nodiscard]] bool canViewMembers() const;
 	[[nodiscard]] bool canViewAdmins() const;
 	[[nodiscard]] bool canViewBanned() const;
 	[[nodiscard]] bool canEditSignatures() const;
-	[[nodiscard]] bool canEditAutoTranslate() const;
 	[[nodiscard]] bool canEditStickers() const;
 	[[nodiscard]] bool canEditEmoji() const;
 	[[nodiscard]] bool canDelete() const;
@@ -441,13 +404,9 @@ public:
 	void setLocation(const MTPChannelLocation &data);
 	[[nodiscard]] const ChannelLocation *getLocation() const;
 
-	void setDiscussionLink(ChannelData *link);
-	[[nodiscard]] ChannelData *discussionLink() const;
-	[[nodiscard]] bool discussionLinkKnown() const;
-
-	void setMonoforumLink(ChannelData *link);
-	[[nodiscard]] ChannelData *monoforumLink() const;
-	[[nodiscard]] bool monoforumDisabled() const;
+	void setLinkedChat(ChannelData *linked);
+	[[nodiscard]] ChannelData *linkedChat() const;
+	[[nodiscard]] bool linkedChatKnown() const;
 
 	void ptsInit(int32 pts) {
 		_ptsWaiter.init(pts);
@@ -508,7 +467,6 @@ public:
 
 	void setStarsPerMessage(int stars);
 	[[nodiscard]] int starsPerMessage() const;
-	[[nodiscard]] int commonStarsPerMessage() const;
 
 	[[nodiscard]] int peerGiftsCount() const;
 	void setPeerGiftsCount(int count);
@@ -542,15 +500,13 @@ public:
 
 	[[nodiscard]] bool hasActiveStories() const;
 	[[nodiscard]] bool hasUnreadStories() const;
-	[[nodiscard]] bool hasActiveVideoStream() const;
 	void setStoriesState(StoriesState state);
 
 	[[nodiscard]] Data::Forum *forum() const {
 		return mgInfo ? mgInfo->forum() : nullptr;
 	}
-	[[nodiscard]] Data::SavedMessages *monoforum() const {
-		return mgInfo ? mgInfo->monoforum() : nullptr;
-	}
+
+	void processTopics(const MTPVector<MTPForumTopic> &topics);
 
 	[[nodiscard]] int levelHint() const;
 	void updateLevelHint(int levelHint);
@@ -558,9 +514,11 @@ public:
 	[[nodiscard]] TimeId subscriptionUntilDate() const;
 	void updateSubscriptionUntilDate(TimeId subscriptionUntilDate);
 
-	[[nodiscard]] MTPInputChannel inputChannel() const;
-
 	// Still public data members.
+	uint64 access = 0;
+
+	MTPinputChannel inputChannel = MTP_inputChannelEmpty();
+
 	int32 date = 0;
 	std::unique_ptr<MegagroupInfo> mgInfo;
 
@@ -583,15 +541,20 @@ private:
 		std::vector<Data::UnavailableReason> &&reasons) override;
 
 	Flags _flags = ChannelDataFlags(Flag::Forbidden);
+	int _peerGiftsCount = 0;
 
 	PtsWaiter _ptsWaiter;
 
 	Data::UsernamesInfo _username;
 
+	int _membersCount = -1;
+	int _adminsCount = 1;
+	int _restrictedCount = 0;
+	int _kickedCount = 0;
+	int _pendingRequestsCount = 0;
+	int _levelHint = 0;
 	std::vector<UserId> _recentRequesters;
 	MsgId _availableMinId = 0;
-
-	uint64 _accessHash = 0;
 
 	RestrictionFlags _defaultRestrictions;
 	AdminRightFlags _adminRights;
@@ -602,19 +565,7 @@ private:
 	std::vector<Data::UnavailableReason> _unavailableReasons;
 	std::unique_ptr<InvitePeek> _invitePeek;
 	QString _inviteLink;
-
-	ChannelData *_discussionLink = nullptr;
-	ChannelData *_monoforumLink = nullptr;
-	bool _discussionLinkKnown = false;
-
-	int _peerGiftsCount = 0;
-	int _membersCount = -1;
-	int _adminsCount = 1;
-	int _restrictedCount = 0;
-	int _kickedCount = 0;
-	int _pendingRequestsCount = 0;
-	int _levelHint = 0;
-	int _starsPerMessage = 0;
+	std::optional<ChannelData*> _linkedChat;
 
 	Data::AllowedReactions _allowedReactions;
 

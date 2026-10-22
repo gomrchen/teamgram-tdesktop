@@ -182,31 +182,30 @@ inline auto DefaultRestrictionValue(
 			| Flag::HasLink
 			| Flag::Forbidden
 			| Flag::Creator;
-		if (const auto channel = topic->channel()) {
-			return rpl::combine(
-				PeerFlagsValue(channel, mask),
-				RestrictionsValue(channel, rights),
-				DefaultRestrictionsValue(channel, rights),
-				AdminRightsValue(channel, ChatAdminRight::ManageTopics),
-				topic->session().changes().topicFlagsValue(
-					topic,
-					TopicUpdate::Flag::Closed),
-				[=](
-						ChannelDataFlags flags,
-						ChatRestrictions sendRestriction,
-						ChatRestrictions defaultSendRestriction,
-						auto,
-						auto) {
-					const auto notAmInFlags = Flag::Left | Flag::Forbidden;
-					const auto allowed = !(flags & notAmInFlags)
-						|| ((flags & Flag::HasLink)
-							&& !(flags & Flag::JoinToWrite));
-					return allowed
-						&& ((flags & Flag::Creator)
-							|| (!sendRestriction && !defaultSendRestriction))
-						&& (!topic->closed() || topic->canToggleClosed());
-				});
-		}
+		const auto channel = topic->channel();
+		return rpl::combine(
+			PeerFlagsValue(channel.get(), mask),
+			RestrictionsValue(channel, rights),
+			DefaultRestrictionsValue(channel, rights),
+			AdminRightsValue(channel, ChatAdminRight::ManageTopics),
+			topic->session().changes().topicFlagsValue(
+				topic,
+				TopicUpdate::Flag::Closed),
+			[=](
+					ChannelDataFlags flags,
+					ChatRestrictions sendRestriction,
+					ChatRestrictions defaultSendRestriction,
+					auto,
+					auto) {
+				const auto notAmInFlags = Flag::Left | Flag::Forbidden;
+				const auto allowed = !(flags & notAmInFlags)
+					|| ((flags & Flag::HasLink)
+						&& !(flags & Flag::JoinToWrite));
+				return allowed
+					&& ((flags & Flag::Creator)
+						|| (!sendRestriction && !defaultSendRestriction))
+					&& (!topic->closed() || topic->canToggleClosed());
+			});
 	}
 	return CanSendAnyOfValue(thread->peer(), rights, forbidInForums);
 }
@@ -270,12 +269,10 @@ inline auto DefaultRestrictionValue(
 			| Flag::Left
 			| Flag::Forum
 			| Flag::JoinToWrite
-			| Flag::Monoforum
 			| Flag::HasLink
 			| Flag::Forbidden
 			| Flag::Creator
-			| Flag::Broadcast
-			| Flag::MonoforumDisabled;
+			| Flag::Broadcast;
 		return rpl::combine(
 			PeerFlagsValue(channel, mask),
 			AdminRightValue(
@@ -290,16 +287,12 @@ inline auto DefaultRestrictionValue(
 					bool unrestrictedByBoosts,
 					ChatRestrictions sendRestriction,
 					ChatRestrictions defaultSendRestriction) {
-				if (flags & Flag::MonoforumDisabled) {
-					return false;
-				}
 				const auto notAmInFlags = Flag::Left | Flag::Forbidden;
 				const auto forumRestriction = forbidInForums
 					&& (flags & Flag::Forum);
 				const auto allowed = !(flags & notAmInFlags)
 					|| ((flags & Flag::HasLink)
-						&& !(flags & Flag::JoinToWrite))
-					|| (flags & Flag::Monoforum);
+						&& !(flags & Flag::JoinToWrite));
 				const auto restricted = sendRestriction
 					| (defaultSendRestriction && !unrestrictedByBoosts);
 				return allowed
@@ -376,15 +369,13 @@ rpl::producer<bool> CanPinMessagesValue(not_null<PeerData*> peer) {
 
 rpl::producer<bool> CanManageGroupCallValue(not_null<PeerData*> peer) {
 	const auto flag = ChatAdminRight::ManageCall;
-	if (const auto user = peer->asUser()) {
-		return rpl::single(user->isSelf());
-	} else if (const auto chat = peer->asChat()) {
+	if (const auto chat = peer->asChat()) {
 		return chat->amCreator()
-			? (rpl::single(true) | rpl::type_erased)
+			? (rpl::single(true) | rpl::type_erased())
 			: AdminRightValue(chat, flag);
 	} else if (const auto channel = peer->asChannel()) {
 		return channel->amCreator()
-			? (rpl::single(true) | rpl::type_erased)
+			? (rpl::single(true) | rpl::type_erased())
 			: AdminRightValue(channel, flag);
 	}
 	return rpl::single(false);
@@ -521,23 +512,6 @@ bool ChannelHasSubscriptionUntilDate(ChannelData *channel) {
 	return channel && channel->subscriptionUntilDate() > 0;
 }
 
-rpl::producer<Data::StarsRating> StarsRatingValue(
-		not_null<PeerData*> peer) {
-	if (const auto user = peer->asUser()) {
-		return user->session().changes().peerFlagsValue(
-			user,
-			Data::PeerUpdate::Flag::StarsRating
-		) | rpl::map([=] {
-			auto result = user->starsRating();
-			if (!user->isSelf() && result.level < 0) {
-				result.stars = 0;
-			}
-			return result;
-		});
-	}
-	return rpl::single(Data::StarsRating());
-}
-
 rpl::producer<QImage> PeerUserpicImageValue(
 		not_null<PeerData*> peer,
 		int size,
@@ -558,7 +532,7 @@ rpl::producer<QImage> PeerUserpicImageValue(
 
 			if (loading && !state->waiting) {
 				peer->session().downloaderTaskFinished(
-				) | rpl::on_next(state->push, state->waiting);
+				) | rpl::start_with_next(state->push, state->waiting);
 			} else if (!loading && state->waiting) {
 				state->waiting.destroy();
 			}
@@ -578,7 +552,7 @@ rpl::producer<QImage> PeerUserpicImageValue(
 		peer->session().changes().peerFlagsValue(
 			peer,
 			PeerUpdate::Flag::Photo
-		) | rpl::on_next(state->push, result);
+		) | rpl::start_with_next(state->push, result);
 		return result;
 	};
 }
@@ -625,7 +599,7 @@ rpl::producer<int> UniqueReactionsLimitValue(
 	) | rpl::map([config = &peer->session().appConfig()] {
 		return UniqueReactionsLimit(config);
 	}) | rpl::distinct_until_changed();
-	if (peer->isChannel()) {
+	if (const auto channel = peer->asChannel()) {
 		return rpl::combine(
 			PeerAllowedReactionsValue(peer),
 			std::move(configValue)
@@ -634,7 +608,7 @@ rpl::producer<int> UniqueReactionsLimitValue(
 				? allowedReactions.maxCount
 				: limit;
 		});
-	} else if (peer->isChat()) {
+	} else if (const auto chat = peer->asChat()) {
 		return rpl::combine(
 			PeerAllowedReactionsValue(peer),
 			std::move(configValue)

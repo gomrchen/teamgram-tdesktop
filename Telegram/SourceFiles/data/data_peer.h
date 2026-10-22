@@ -7,11 +7,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
-#include "data/notify/data_peer_notify_settings.h"
 #include "data/data_types.h"
 #include "data/data_flags.h"
+#include "data/notify/data_peer_notify_settings.h"
 #include "data/data_cloud_file.h"
-#include "data/data_peer_common.h"
 #include "ui/userpic_view.h"
 
 struct BotInfo;
@@ -25,7 +24,6 @@ enum class ChatRestriction;
 namespace Ui {
 class EmptyUserpic;
 struct BotVerifyDetails;
-struct ColorCollectible;
 } // namespace Ui
 
 namespace Main {
@@ -39,8 +37,6 @@ class Forum;
 class ForumTopic;
 class Session;
 class GroupCall;
-class SavedMessages;
-class SavedSublist;
 struct ReactionId;
 class WallPaper;
 
@@ -143,9 +139,6 @@ struct AllowedReactions {
 	not_null<Session*> owner,
 	const MTPInputUser &input);
 
-[[nodiscard]] Ui::ColorCollectible ParseColorCollectible(
-	const MTPDpeerColorCollectible &data);
-
 } // namespace Data
 
 class PeerClickHandler : public ClickHandler {
@@ -191,12 +184,6 @@ struct PeerBarDetails {
 	int paysPerMessage = 0;
 };
 
-struct PaintUserpicContext {
-	QPoint position;
-	int size = 0;
-	Ui::PeerUserpicShape shape = Ui::PeerUserpicShape::Auto;
-};
-
 class PeerData {
 protected:
 	PeerData(not_null<Data::Session*> owner, PeerId id);
@@ -218,32 +205,10 @@ public:
 	[[nodiscard]] uint8 colorIndex() const {
 		return _colorIndex;
 	}
-	[[nodiscard]] auto colorCollectible() const
-	-> const std::shared_ptr<Ui::ColorCollectible> & {
-		return _colorCollectible;
-	}
-	bool changeColorCollectible(Ui::ColorCollectible data);
-	bool clearColorCollectible();
 	bool changeColorIndex(uint8 index);
 	bool clearColorIndex();
 	[[nodiscard]] DocumentId backgroundEmojiId() const;
 	bool changeBackgroundEmojiId(DocumentId id);
-
-	[[nodiscard]] std::optional<uint8> colorProfileIndex() const {
-		return _colorProfileIndex;
-	}
-	[[nodiscard]] auto colorProfileCollectible() const
-	-> const std::shared_ptr<Ui::ColorCollectible> & {
-		return _colorProfileCollectible;
-	}
-	bool changeColorProfileCollectible(Ui::ColorCollectible data);
-	bool changeColorProfileCollectible(
-		const tl::conditional<MTPPeerColor> &cloudColor);
-	bool clearColorProfileCollectible();
-	bool changeColorProfileIndex(uint8 index);
-	bool clearColorProfileIndex();
-	[[nodiscard]] DocumentId profileBackgroundEmojiId() const;
-	bool changeProfileBackgroundEmojiId(DocumentId id);
 
 	void setEmojiStatus(const MTPEmojiStatus &status);
 	void setEmojiStatus(EmojiStatusId emojiStatusId, TimeId until = 0);
@@ -267,7 +232,6 @@ public:
 	[[nodiscard]] bool isMegagroup() const;
 	[[nodiscard]] bool isBroadcast() const;
 	[[nodiscard]] bool isForum() const;
-	[[nodiscard]] bool isMonoforum() const;
 	[[nodiscard]] bool isGigagroup() const;
 	[[nodiscard]] bool isRepliesChat() const;
 	[[nodiscard]] bool isVerifyCodes() const;
@@ -293,14 +257,6 @@ public:
 	[[nodiscard]] Data::Forum *forum() const;
 	[[nodiscard]] Data::ForumTopic *forumTopicFor(MsgId rootId) const;
 
-	[[nodiscard]] Data::SavedMessages *monoforum() const;
-	[[nodiscard]] Data::SavedSublist *monoforumSublistFor(
-		PeerId sublistPeerId) const;
-
-	[[nodiscard]] bool useSubsectionTabs() const;
-	[[nodiscard]] bool viewForumAsMessages() const;
-	void processTopics(const MTPVector<MTPForumTopic> &topics);
-
 	[[nodiscard]] Data::PeerNotifySettings &notify() {
 		return _notify;
 	}
@@ -317,12 +273,9 @@ public:
 	[[nodiscard]] rpl::producer<bool> slowmodeAppliedValue() const;
 	[[nodiscard]] int slowmodeSecondsLeft() const;
 	[[nodiscard]] bool canManageGroupCall() const;
-	[[nodiscard]] bool canManageRanks() const;
-	[[nodiscard]] bool amMonoforumAdmin() const;
 
 	[[nodiscard]] int starsPerMessage() const;
 	[[nodiscard]] int starsPerMessageChecked() const;
-	[[nodiscard]] Data::StarsRating starsRating() const;
 
 	[[nodiscard]] UserData *asBot();
 	[[nodiscard]] const UserData *asBot() const;
@@ -340,22 +293,11 @@ public:
 	[[nodiscard]] const ChatData *asChatNotMigrated() const;
 	[[nodiscard]] ChannelData *asChannelOrMigrated();
 	[[nodiscard]] const ChannelData *asChannelOrMigrated() const;
-	[[nodiscard]] ChannelData *asMonoforum();
-	[[nodiscard]] const ChannelData *asMonoforum() const;
 
 	[[nodiscard]] ChatData *migrateFrom() const;
 	[[nodiscard]] ChannelData *migrateTo() const;
 	[[nodiscard]] not_null<PeerData*> migrateToOrMe();
 	[[nodiscard]] not_null<const PeerData*> migrateToOrMe() const;
-	[[nodiscard]] not_null<PeerData*> userpicPaintingPeer();
-	[[nodiscard]] not_null<const PeerData*> userpicPaintingPeer() const;
-	[[nodiscard]] Ui::PeerUserpicShape userpicShape() const;
-
-	// isMonoforum() ? monoforumLink() : nullptr
-	[[nodiscard]] ChannelData *monoforumBroadcast() const;
-
-	// isMonoforum() ? nullptr : monoforumLink()
-	[[nodiscard]] ChannelData *broadcastMonoforum() const;
 
 	void updateFull();
 	void updateFullForced();
@@ -386,28 +328,15 @@ public:
 		const ImageLocation &location,
 		bool hasVideo);
 	void setUserpicPhoto(const MTPPhoto &data);
-
 	void paintUserpic(
-		QPainter &p,
+		Painter &p,
 		Ui::PeerUserpicView &view,
-		PaintUserpicContext context) const;
-	void paintUserpic(
-			QPainter &p,
-			Ui::PeerUserpicView &view,
-			int x,
-			int y,
-			int size,
-			bool forceCircle = false) const {
-		paintUserpic(p, view, {
-			.position = { x, y },
-			.size = size,
-			.shape = (forceCircle
-				? Ui::PeerUserpicShape::Circle
-				: Ui::PeerUserpicShape::Auto),
-		});
-	}
+		int x,
+		int y,
+		int size,
+		bool forceCircle = false) const;
 	void paintUserpicLeft(
-			QPainter &p,
+			Painter &p,
 			Ui::PeerUserpicView &view,
 			int x,
 			int y,
@@ -462,16 +391,11 @@ public:
 	[[nodiscard]] bool canPinMessages() const;
 	[[nodiscard]] bool canEditMessagesIndefinitely() const;
 	[[nodiscard]] bool canCreatePolls() const;
-	[[nodiscard]] bool canCreateTodoLists() const;
 	[[nodiscard]] bool canCreateTopics() const;
 	[[nodiscard]] bool canManageTopics() const;
-	[[nodiscard]] bool canPostStories() const;
-	[[nodiscard]] bool canEditStories() const;
-	[[nodiscard]] bool canDeleteStories() const;
 	[[nodiscard]] bool canManageGifts() const;
 	[[nodiscard]] bool canTransferGifts() const;
 	[[nodiscard]] bool canExportChatHistory() const;
-	[[nodiscard]] bool autoTranslation() const;
 
 	// Returns true if about text was changed.
 	bool setAbout(const QString &newAbout);
@@ -481,7 +405,9 @@ public:
 
 	void checkFolder(FolderId folderId);
 
-	void setBarSettings(PeerBarSettings which);
+	void setBarSettings(PeerBarSettings which) {
+		_barSettings.set(which);
+	}
 	[[nodiscard]] auto barSettings() const {
 		return (_barSettings.current() & PeerBarSetting::Unknown)
 			? std::nullopt
@@ -490,11 +416,10 @@ public:
 	[[nodiscard]] auto barSettingsValue() const {
 		return (_barSettings.current() & PeerBarSetting::Unknown)
 			? _barSettings.changes()
-			: (_barSettings.value() | rpl::type_erased);
+			: (_barSettings.value() | rpl::type_erased());
 	}
 	[[nodiscard]] int paysPerMessage() const;
 	void clearPaysPerMessage();
-	[[nodiscard]] bool hideLinks() const;
 	[[nodiscard]] QString requestChatTitle() const;
 	[[nodiscard]] TimeId requestChatDate() const;
 	[[nodiscard]] UserData *businessBot() const;
@@ -516,12 +441,10 @@ public:
 	void saveTranslationDisabled(bool disabled);
 
 	void setBarSettings(const MTPPeerSettings &data);
+	bool changeColorIndex(const tl::conditional<MTPint> &cloudColorIndex);
 	bool changeBackgroundEmojiId(
 		const tl::conditional<MTPlong> &cloudBackgroundEmoji);
-	bool changeColorCollectible(
-		const tl::conditional<MTPPeerColor> &cloudColor);
 	bool changeColor(const tl::conditional<MTPPeerColor> &cloudColor);
-	bool changeColorProfile(const tl::conditional<MTPPeerColor> &cloudColor);
 
 	enum class BlockStatus : char {
 		Unknown,
@@ -562,8 +485,8 @@ public:
 	[[nodiscard]] Data::GroupCall *groupCall() const;
 	[[nodiscard]] PeerId groupCallDefaultJoinAs() const;
 
-	void setThemeToken(const QString &token);
-	[[nodiscard]] const QString &themeToken() const;
+	void setThemeEmoji(const QString &emoticon);
+	[[nodiscard]] const QString &themeEmoji() const;
 
 	void setWallPaper(
 		std::optional<Data::WallPaper> paper,
@@ -576,18 +499,15 @@ public:
 		None,
 		HasRead,
 		HasUnread,
-		HasVideoStream,
 	};
 	[[nodiscard]] bool hasActiveStories() const;
 	[[nodiscard]] bool hasUnreadStories() const;
-	[[nodiscard]] bool hasActiveVideoStream() const;
 	void setStoriesState(StoriesState state);
 
 	[[nodiscard]] int peerGiftsCount() const;
 
-	[[nodiscard]] MTPInputPeer input() const;
-
 	const PeerId id;
+	MTPinputPeer input = MTP_inputPeerEmpty();
 
 protected:
 	void updateNameDelayed(
@@ -629,7 +549,6 @@ private:
 
 	EmojiStatusId _emojiStatusId;
 	DocumentId _backgroundEmojiId = 0;
-	DocumentId _profileBackgroundEmojiId = 0;
 	crl::time _lastFullUpdate = 0;
 
 	QString _name;
@@ -642,19 +561,16 @@ private:
 
 	BarSettings _barSettings = PeerBarSettings(PeerBarSetting::Unknown);
 	std::unique_ptr<PeerBarDetails> _barDetails;
-	std::shared_ptr<Ui::ColorCollectible> _colorCollectible;
-	std::shared_ptr<Ui::ColorCollectible> _colorProfileCollectible;
 
 	BlockStatus _blockStatus = BlockStatus::Unknown;
 	LoadedStatus _loadedStatus = LoadedStatus::Not;
 	TranslationFlag _translationFlag = TranslationFlag::Unknown;
 	uint8 _colorIndex : 6 = 0;
 	uint8 _colorIndexCloud : 1 = 0;
-	std::optional<uint8> _colorProfileIndex;
 	uint8 _userpicHasVideo : 1 = 0;
 
 	QString _about;
-	QString _themeToken;
+	QString _themeEmoticon;
 	std::unique_ptr<Data::WallPaper> _wallPaper;
 
 };
@@ -667,17 +583,10 @@ void SetTopPinnedMessageId(
 [[nodiscard]] FullMsgId ResolveTopPinnedId(
 	not_null<PeerData*> peer,
 	MsgId topicRootId,
-	PeerId monoforumPeerId,
 	PeerData *migrated = nullptr);
 [[nodiscard]] FullMsgId ResolveMinPinnedId(
 	not_null<PeerData*> peer,
 	MsgId topicRootId,
-	PeerId monoforumPeerId,
 	PeerData *migrated = nullptr);
-
-[[nodiscard]] uint64 BackgroundEmojiIdFromColor(const MTPPeerColor *color);
-[[nodiscard]] std::optional<uint8> ColorIndexFromColor(const MTPPeerColor *);
-
-[[nodiscard]] bool IsBotUserCreatesTopics(not_null<PeerData*>);
 
 } // namespace Data

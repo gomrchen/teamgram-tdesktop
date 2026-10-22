@@ -75,19 +75,14 @@ private:
 
 class CreditsHistory final {
 public:
-	CreditsHistory(
-		not_null<PeerData*> peer,
-		bool in,
-		bool out,
-		bool currency = false);
+	CreditsHistory(not_null<PeerData*> peer, bool in, bool out);
 
 	void request(
 		const Data::CreditsStatusSlice::OffsetToken &token,
 		Fn<void(Data::CreditsStatusSlice)> done);
 	void requestSubscriptions(
 		const Data::CreditsStatusSlice::OffsetToken &token,
-		Fn<void(Data::CreditsStatusSlice)> done,
-		bool missingBalance = false);
+		Fn<void(Data::CreditsStatusSlice)> done);
 
 private:
 	using HistoryTL = MTPpayments_GetStarsTransactions;
@@ -126,7 +121,6 @@ void EditCreditsSubscription(
 	Fn<void(QString)> fail);
 
 [[nodiscard]] MTPInputSavedStarGift InputSavedStarGiftId(
-	const Data::SavedStarGiftId &id,
-	const std::shared_ptr<Data::UniqueGift> &unique = nullptr);
+	const Data::SavedStarGiftId &id);
 
 } // namespace Api

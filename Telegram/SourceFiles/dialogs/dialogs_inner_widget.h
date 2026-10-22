@@ -43,8 +43,6 @@ namespace Ui {
 class IconButton;
 class PopupMenu;
 class FlatLabel;
-class VerticalLayout;
-class RoundButton;
 struct ScrollToRequest;
 namespace Controls {
 enum class QuickDialogAction;
@@ -60,7 +58,6 @@ class ChatFilter;
 class Thread;
 class Folder;
 class Forum;
-class SavedMessages;
 struct ReactionId;
 } // namespace Data
 
@@ -86,8 +83,6 @@ enum class ChatTypeFilter : uchar;
 struct ChosenRow {
 	Key key;
 	Data::MessagePosition message;
-	MsgId topicJumpRootId;
-	PeerId sublistJumpPeerId;
 	QByteArray sponsoredRandomId;
 	bool userpicClick : 1 = false;
 	bool filteredRow : 1 = false;
@@ -167,8 +162,7 @@ public:
 	void chatPreviewShown(bool shown, RowDescriptor row = {});
 	bool chooseRow(
 		Qt::KeyboardModifiers modifiers = {},
-		MsgId pressedTopicRootId = {},
-		PeerId pressedSublistPeerId = {});
+		MsgId pressedTopicRootId = {});
 
 	void scrollToEntry(const RowDescriptor &entry);
 
@@ -487,8 +481,6 @@ private:
 	void startReorderPinned(QPoint localPosition);
 	int updateReorderIndexGetCount();
 	bool updateReorderPinned(QPoint localPosition);
-	[[nodiscard]] bool skipChatsListFreeze() const;
-	void unfreezeShownList(bool updateIfWasFrozen);
 	void finishReorderPinned();
 	bool finishReorderOnRelease();
 	void stopReorderPinned();
@@ -524,8 +516,6 @@ private:
 		uint8 more,
 		bool active);
 
-	void performDrag();
-
 	const not_null<Window::SessionController*> _controller;
 
 	not_null<IndexedList*> _shownList;
@@ -552,7 +542,6 @@ private:
 	Row *_selected = nullptr;
 	Row *_pressed = nullptr;
 	MsgId _pressedTopicJumpRootId;
-	PeerId _pressedSublistJumpPeerId;
 	bool _selectedTopicJump = false;
 	bool _pressedTopicJump = false;
 
@@ -560,8 +549,6 @@ private:
 	bool _pressedRightButtonSponsored = false;
 	bool _selectedRightButton = false;
 	bool _pressedRightButton = false;
-
-	Row *_qdragging = nullptr;
 
 	Row *_dragging = nullptr;
 	int _draggingIndex = -1;
@@ -627,8 +614,6 @@ private:
 	object_ptr<SearchEmpty> _searchEmpty = { nullptr };
 	SearchState _searchEmptyState;
 	object_ptr<Ui::FlatLabel> _empty = { nullptr };
-	object_ptr<Ui::VerticalLayout> _emptyList = { nullptr };
-	object_ptr<Ui::RoundButton> _emptyButton = { nullptr };
 
 	Ui::DraggingScrollManager _draggingScroll;
 
@@ -680,12 +665,10 @@ private:
 	rpl::event_stream<> _touchCancelRequests;
 
 	rpl::variable<ChildListShown> _childListShown;
-	base::Timer _freezeTimer;
 	float64 _narrowRatio = 0.;
 	bool _geometryInited = false;
 
-	Data::SavedMessages *_savedSublists = nullptr;
-
+	bool _savedSublists = false;
 	bool _searchLoading = false;
 	bool _searchWaiting = false;
 

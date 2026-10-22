@@ -175,10 +175,7 @@ private:
 	rpl::event_stream<float64> _zoomRequests;
 
 	rpl::lifetime _waitingSizeLifetime;
-	rpl::lifetime _localZoomLifetime;
 
 };
-
-void FixCacheForHighDPIChartWidget(not_null<Ui::RpWidget*> container);
 
 } // namespace Statistic

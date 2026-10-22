@@ -9,7 +9,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "lang/lang_keys.h"
 #include "intro/intro_code.h"
-#include "intro/intro_email.h"
 #include "intro/intro_qr.h"
 #include "styles/style_intro.h"
 #include "ui/widgets/buttons.h"
@@ -62,37 +61,32 @@ PhoneWidget::PhoneWidget(
 	st::introPhone,
 	[](const QString &s) { return Countries::Groups(s); })
 , _checkRequestTimer([=] { checkRequest(); }) {
-	_code->setAccessibleName(tr::lng_country_code(tr::now));
-	_phone->setAccessibleName(tr::lng_phone_number(tr::now));
 	_phone->frontBackspaceEvent(
-	) | rpl::on_next([=](not_null<QKeyEvent*> e) {
+	) | rpl::start_with_next([=](not_null<QKeyEvent*> e) {
 		_code->startErasing(e);
 	}, _code->lifetime());
 
 	_country->codeChanged(
-	) | rpl::on_next([=](const QString &code) {
+	) | rpl::start_with_next([=](const QString &code) {
 		_code->codeSelected(code);
 		_phone->chooseCode(code);
 	}, _country->lifetime());
 	_code->codeChanged(
-	) | rpl::on_next([=](const QString &code) {
+	) | rpl::start_with_next([=](const QString &code) {
 		_country->onChooseCode(code);
 		_phone->chooseCode(code);
 	}, _code->lifetime());
 	_code->addedToNumber(
-	) | rpl::on_next([=](const QString &added) {
+	) | rpl::start_with_next([=](const QString &added) {
 		_phone->addedToNumber(added);
 	}, _phone->lifetime());
-	_code->spacePressed() | rpl::on_next([=] {
-		submit();
-	}, _code->lifetime());
 	connect(_phone, &Ui::PhonePartInput::changed, [=] { phoneChanged(); });
 	connect(_code, &Ui::CountryCodeInput::changed, [=] { phoneChanged(); });
 
 	setTitleText(tr::lng_phone_title());
 	setDescriptionText(tr::lng_phone_desc());
 	getData()->updated.events(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		countryChanged();
 	}, lifetime());
 	setErrorCentered(true);
@@ -102,10 +96,6 @@ PhoneWidget::PhoneWidget(
 		_country->chooseCountry(u"US"_q);
 	}
 	_changed = false;
-}
-
-QString PhoneWidget::accessibilityName() {
-	return tr::lng_phone_title(tr::now);
 }
 
 void PhoneWidget::setupQrLogin() {
@@ -119,7 +109,7 @@ void PhoneWidget::setupQrLogin() {
 	rpl::combine(
 		sizeValue(),
 		qrLogin->widthValue()
-	) | rpl::on_next([=](QSize size, int qrLoginWidth) {
+	) | rpl::start_with_next([=](QSize size, int qrLoginWidth) {
 		qrLogin->moveToLeft(
 			(size.width() - qrLoginWidth) / 2,
 			contentTop() + st::introQrLoginLinkTop);
@@ -244,9 +234,6 @@ void PhoneWidget::phoneSubmitDone(const MTPauth_SentCode &result) {
 		fillSentCodeData(data);
 		getData()->phone = DigitsOnly(_sentPhone);
 		getData()->phoneHash = qba(data.vphone_code_hash());
-		if (getData()->emailStatus == EmailStatus::SetupRequired) {
-			return goNext<EmailWidget>();
-		}
 		const auto next = data.vnext_type();
 		if (next && next->type() == mtpc_auth_codeTypeCall) {
 			getData()->callStatus = CallStatus::Waiting;

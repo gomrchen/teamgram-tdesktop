@@ -279,12 +279,7 @@ bool Story::mine() const {
 }
 
 StoryIdDates Story::idDates() const {
-	return {
-		_id,
-		_date,
-		_expires,
-		std::holds_alternative<std::shared_ptr<GroupCall>>(_media.data),
-	};
+	return { _id, _date, _expires };
 }
 
 FullStoryId Story::fullId() const {
@@ -321,20 +316,11 @@ DocumentData *Story::document() const {
 	return result ? result->get() : nullptr;
 }
 
-const std::shared_ptr<GroupCall> &Story::call() const {
-	const auto result = std::get_if<std::shared_ptr<GroupCall>>(
-		&_media.data);
-	static const auto empty = std::shared_ptr<GroupCall>();
-	return result ? *result : empty;
-}
-
 bool Story::hasReplyPreview() const {
 	return v::match(_media.data, [](not_null<PhotoData*> photo) {
 		return !photo->isNull();
 	}, [](not_null<DocumentData*> document) {
 		return document->hasThumbnail();
-	}, [](const std::shared_ptr<GroupCall> &call) {
-		return false;
 	}, [](v::null_t) {
 		return false;
 	});
@@ -345,8 +331,6 @@ Image *Story::replyPreview() const {
 		return photo->getReplyPreview(fullId(), _peer, false);
 	}, [&](not_null<DocumentData*> document) {
 		return document->getReplyPreview(fullId(), _peer, false);
-	}, [](const std::shared_ptr<GroupCall> &call) {
-		return (Image*)nullptr;
 	}, [](v::null_t) {
 		return (Image*)nullptr;
 	});
@@ -363,10 +347,10 @@ TextWithEntities Story::inReplyText() const {
 				tr::now,
 				lt_media,
 				Ui::Text::Colorized(type),
-				tr::marked),
+				Ui::Text::WithEntities),
 			lt_caption,
 			_caption,
-			tr::marked);
+			Ui::Text::WithEntities);
 }
 
 void Story::setPinnedToTop(bool pinned) {
@@ -383,12 +367,7 @@ bool Story::pinnedToTop() const {
 }
 
 void Story::setInProfile(bool value) {
-	if (_inProfile != value) {
-		_inProfile = value;
-		if (const auto item = _peer->owner().stories().lookupItem(this)) {
-			item->setStoryInProfile(value);
-		}
-	}
+	_inProfile = value;
 }
 
 bool Story::inProfile() const {
@@ -435,7 +414,11 @@ bool Story::canShare() const {
 }
 
 bool Story::canDelete() const {
-	return _peer->canDeleteStories() || (out() && _peer->canPostStories());
+	if (const auto channel = _peer->asChannel()) {
+		return channel->canDeleteStories()
+			|| (out() && channel->canPostStories());
+	}
+	return _peer->isSelf();
 }
 
 bool Story::canReport() const {
@@ -727,7 +710,7 @@ void Story::applyFields(
 	auto caption = TextWithEntities{
 		data.vcaption().value_or_empty(),
 		Api::EntitiesFromMTP(
-			&session(),
+			&owner().session(),
 			data.ventities().value_or_empty()),
 	};
 	if (const auto user = _peer->asUser()) {
@@ -918,14 +901,6 @@ QString Story::repostSourceName() const {
 
 StoryId Story::repostSourceId() const {
 	return _repostSourceId;
-}
-
-const base::flat_set<int> &Story::albumIds() const {
-	return _albumIds;
-}
-
-void Story::setAlbumIds(base::flat_set<int> ids) {
-	_albumIds = std::move(ids);
 }
 
 PeerData *Story::fromPeer() const {

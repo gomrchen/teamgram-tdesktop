@@ -16,13 +16,12 @@ public:
 	explicit RendererSW(not_null<OverlayWidget*> owner);
 
 	void paintFallback(
-		Painter &p,
+		Painter &&p,
 		const QRegion &clip,
 		Ui::GL::Backend backend) override;
 
 private:
 	void paintBackground() override;
-	void paintVideoStream() override;
 	void paintTransformedVideoFrame(ContentGeometry geometry) override;
 	void paintTransformedStaticContent(
 		const QImage &image,
@@ -33,8 +32,7 @@ private:
 	void paintTransformedImage(
 		const QImage &image,
 		QRect rect,
-		int rotation,
-		const QRectF &sourceRect = QRectF());
+		int rotation);
 	void paintControlsFade(QRect content, const ContentGeometry &geometry);
 	void paintRadialLoading(
 		QRect inner,

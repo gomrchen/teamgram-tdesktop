@@ -8,7 +8,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "info/channel_statistics/boosts/giveaway/giveaway_list_controllers.h"
 
 #include "apiwrap.h"
-#include "boxes/peer_list_controllers.h"
 #include "data/data_channel.h"
 #include "data/data_folder.h"
 #include "data/data_peer.h"
@@ -139,11 +138,7 @@ std::unique_ptr<PeerListRow> AwardMembersListController::createRow(
 	if (!user || user->isInaccessible() || user->isBot() || user->isSelf()) {
 		return nullptr;
 	}
-	auto type = Type{
-		.chatStyle = _chatStyle.get(),
-		.circleCache = &_pillCircleCache,
-	};
-	return std::make_unique<Row>(participant, type);
+	return std::make_unique<PeerListRow>(participant);
 }
 
 base::unique_qptr<Ui::PopupMenu> AwardMembersListController::rowContextMenu(
@@ -318,7 +313,7 @@ SelectedChannelsListController::SelectedChannelsListController(
 void SelectedChannelsListController::setTopStatus(rpl::producer<QString> s) {
 	_statusLifetime = std::move(
 		s
-	) | rpl::on_next([=](const QString &t) {
+	) | rpl::start_with_next([=](const QString &t) {
 		if (delegate()->peerListFullRowsCount() > 0) {
 			delegate()->peerListRowAt(0)->setCustomStatus(t);
 		}

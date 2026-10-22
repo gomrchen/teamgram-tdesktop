@@ -27,12 +27,12 @@ MainList::MainList(
 
 	std::move(
 		pinnedLimit
-	) | rpl::on_next([=](int limit) {
-		_pinned.setLimit(std::max(limit, 1));
+	) | rpl::start_with_next([=](int limit) {
+		_pinned.setLimit(limit);
 	}, _lifetime);
 
 	session->changes().realtimeNameUpdates(
-	) | rpl::on_next([=](const Data::NameUpdate &update) {
+	) | rpl::start_with_next([=](const Data::NameUpdate &update) {
 		_all.peerNameChanged(_filterId, update.peer, update.oldFirstLetters);
 	}, _lifetime);
 }
@@ -120,10 +120,6 @@ void MainList::unreadStateChanged(
 	const auto notify = !useClouded || wasState.known;
 	const auto notifier = unreadStateChangeNotifier(notify);
 	_unreadState += nowState - wasState;
-	if (_unreadState.chatsMuted > _unreadState.chats
-		|| _unreadState.messagesMuted > _unreadState.messages) {
-		[[maybe_unused]] int a = 0;
-	}
 	if (updateCloudUnread) {
 		Assert(nowState.known);
 		_cloudUnreadState += nowState - wasState;
@@ -148,10 +144,6 @@ void MainList::unreadEntryChanged(
 		_unreadState += state;
 	} else {
 		_unreadState -= state;
-	}
-	if (_unreadState.chatsMuted > _unreadState.chats
-		|| _unreadState.messagesMuted > _unreadState.messages) {
-		[[maybe_unused]] int a = 0;
 	}
 	if (updateCloudUnread) {
 		if (added) {

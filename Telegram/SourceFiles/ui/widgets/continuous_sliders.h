@@ -58,15 +58,6 @@ public:
 
 	void setMoveByWheel(bool move);
 
-	QAccessible::Role accessibilityRole() override {
-		return QAccessible::Role::Slider;
-	}
-
-	QString accessibilityValue() const override {
-		const auto percent = std::clamp(qRound(_value * 100.), 0, 100);
-		return QString::number(percent) + '%';
-	}
-
 protected:
 	void mouseMoveEvent(QMouseEvent *e) override;
 	void mousePressEvent(QMouseEvent *e) override;
@@ -74,7 +65,6 @@ protected:
 	void wheelEvent(QWheelEvent *e) override;
 	void enterEventHook(QEnterEvent *e) override;
 	void leaveEventHook(QEvent *e) override;
-	void keyPressEvent(QKeyEvent *e) override;
 
 	float64 fadeOpacity() const {
 		return _fadeOpacity;
@@ -147,16 +137,6 @@ private:
 
 class MediaSlider : public ContinuousSlider {
 public:
-	struct ColorOverrides {
-		std::optional<QColor> activeFg;
-		std::optional<QColor> activeBg;
-		std::optional<QColor> activeBorder;
-		std::optional<QColor> seekFg;
-		std::optional<QColor> seekBorder;
-		std::optional<QColor> inactiveFg;
-		std::optional<QColor> inactiveBorder;
-	};
-
 	MediaSlider(QWidget *parent, const style::MediaSlider &st);
 
 	void setAlwaysDisplayMarker(bool alwaysDisplayMarker) {
@@ -236,7 +216,7 @@ public:
 		});
 	}
 
-	void setColorOverrides(ColorOverrides overrides);
+	void setActiveFgOverride(std::optional<QColor> color);
 	void addDivider(float64 atValue, const QSize &size);
 
 protected:
@@ -256,7 +236,7 @@ private:
 	bool _paintDisabled = false;
 
 	std::vector<Divider> _dividers;
-	ColorOverrides _overrides;
+	std::optional<QColor> _activeFgOverride;
 
 };
 

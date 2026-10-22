@@ -30,15 +30,11 @@ public:
 		Window::SessionController *controller,
 		not_null<PhotoData*> photo,
 		HistoryItem *item,
-		MsgId topicRootId,
-		PeerId monoforumPeerId,
-		bool showDrawButton = false)
+		MsgId topicRootId)
 	: _controller(controller)
 	, _photo(photo)
 	, _item(item)
-	, _topicRootId(topicRootId)
-	, _monoforumPeerId(monoforumPeerId)
-	, _showDrawButton(showDrawButton) {
+	, _topicRootId(topicRootId) {
 	}
 	OpenRequest(
 		Window::SessionController *controller,
@@ -54,18 +50,14 @@ public:
 		not_null<DocumentData*> document,
 		HistoryItem *item,
 		MsgId topicRootId,
-		PeerId monoforumPeerId,
 		bool continueStreaming = false,
-		crl::time startTime = 0,
-		bool showDrawButton = false)
+		crl::time startTime = 0)
 	: _controller(controller)
 	, _document(document)
 	, _item(item)
 	, _topicRootId(topicRootId)
-	, _monoforumPeerId(monoforumPeerId)
 	, _continueStreaming(continueStreaming)
-	, _startTime(startTime)
-	, _showDrawButton(showDrawButton) {
+	, _startTime(startTime) {
 	}
 	OpenRequest(
 		Window::SessionController *controller,
@@ -85,17 +77,6 @@ public:
 	, _storiesContext(context) {
 	}
 
-	OpenRequest(
-		Window::SessionController *controller,
-		std::shared_ptr<Data::GroupCall> call,
-		QString linkSlug,
-		MsgId joinMessageId)
-	: _controller(controller)
-	, _call(std::move(call))
-	, _callLinkSlug(std::move(linkSlug))
-	, _callJoinMessageId(joinMessageId) {
-	}
-
 	[[nodiscard]] PeerData *peer() const {
 		return _peer;
 	}
@@ -111,9 +92,6 @@ public:
 	[[nodiscard]] MsgId topicRootId() const {
 		return _topicRootId;
 	}
-	[[nodiscard]] PeerId monoforumPeerId() const {
-		return _monoforumPeerId;
-	}
 
 	[[nodiscard]] DocumentData *document() const {
 		return _document;
@@ -124,16 +102,6 @@ public:
 	}
 	[[nodiscard]] Data::StoriesContext storiesContext() const {
 		return _storiesContext;
-	}
-
-	[[nodiscard]] const std::shared_ptr<Data::GroupCall> &call() const {
-		return _call;
-	}
-	[[nodiscard]] const QString &callLinkSlug() const {
-		return _callLinkSlug;
-	}
-	[[nodiscard]] MsgId callJoinMessageId() const {
-		return _callJoinMessageId;
 	}
 
 	[[nodiscard]] std::optional<Data::CloudTheme> cloudTheme() const {
@@ -152,10 +120,6 @@ public:
 		return _startTime;
 	}
 
-	[[nodiscard]] bool showDrawButton() const {
-		return _showDrawButton;
-	}
-
 private:
 	Window::SessionController *_controller = nullptr;
 	DocumentData *_document = nullptr;
@@ -165,20 +129,12 @@ private:
 	PeerData *_peer = nullptr;
 	HistoryItem *_item = nullptr;
 	MsgId _topicRootId = 0;
-	PeerId _monoforumPeerId = 0;
 	std::optional<Data::CloudTheme> _cloudTheme = std::nullopt;
 	bool _continueStreaming = false;
 	crl::time _startTime = 0;
-	bool _showDrawButton = false;
-
-	std::shared_ptr<Data::GroupCall> _call;
-	QString _callLinkSlug;
-	MsgId _callJoinMessageId = 0;
 
 };
 
 [[nodiscard]] TimeId ExtractVideoTimestamp(not_null<HistoryItem*> item);
-
-[[nodiscard]] TextWithEntities StripQuoteEntities(TextWithEntities text);
 
 } // namespace Media::View

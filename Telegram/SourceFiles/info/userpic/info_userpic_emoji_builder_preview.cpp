@@ -76,8 +76,8 @@ void PreviewPainter::setDocument(
 	}
 
 	rpl::single() | rpl::then(
-		document->session().downloaderTaskFinished()
-	) | rpl::on_next([=] {
+		document->owner().session().downloaderTaskFinished()
+	) | rpl::start_with_next([=] {
 		if (!_media->loaded()) {
 			return;
 		}
@@ -166,12 +166,11 @@ EmojiUserpic::EmojiUserpic(
 , _painter(size.width())
 , _duration(st::slideWrapDuration) {
 	resize(size);
-	setNaturalWidth(size.width());
 }
 
 void EmojiUserpic::setDocument(not_null<DocumentData*> document) {
 	if (!_playOnce.has_value()) {
-		const auto &c = document->session().appConfig();
+		const auto &c = document->owner().session().appConfig();
 		_playOnce = !c.get<bool>(u"upload_markup_video"_q, false);
 	}
 	_painter.setDocument(document, [=] { update(); });

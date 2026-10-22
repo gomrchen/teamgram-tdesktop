@@ -39,12 +39,12 @@ object_ptr<Ui::RpWidget> CreatePeerBubble(
 	rpl::combine(
 		left->sizeValue(),
 		right->sizeValue()
-	) | rpl::on_next([=](
+	) | rpl::start_with_next([=](
 			const QSize &leftSize,
 			const QSize &rightSize) {
-		peerBubble->setNaturalWidth(
-			leftSize.width() + rightSize.width() + rect::m::sum::h(padding));
-		peerBubble->resize(peerBubble->naturalWidth(), leftSize.height());
+		peerBubble->resize(
+			leftSize.width() + rightSize.width() + rect::m::sum::h(padding),
+			leftSize.height());
 		left->moveToLeft(0, 0);
 		right->moveToRight(padding.right() + st::lineWidth, padding.top());
 		const auto maxRightSize = parent->width()
@@ -56,7 +56,7 @@ object_ptr<Ui::RpWidget> CreatePeerBubble(
 		}
 	}, peerBubble->lifetime());
 	peerBubble->paintRequest(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		auto p = QPainter(peerBubble);
 		auto hq = PainterHighQualityEnabler(p);
 		p.setPen(Qt::NoPen);

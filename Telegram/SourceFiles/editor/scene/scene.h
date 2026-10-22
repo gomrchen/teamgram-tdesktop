@@ -29,7 +29,7 @@ public:
 
 	Scene(const QRectF &rect);
 	~Scene();
-	void applyBrush(const QColor &color, float size, Brush::Tool tool);
+	void applyBrush(const QColor &color, float size);
 
 	[[nodiscard]] std::vector<ItemPtr> items(
 		Qt::SortOrder order = Qt::DescendingOrder) const;
@@ -65,7 +65,6 @@ private:
 	const std::shared_ptr<float64> _lastZ;
 
 	std::vector<ItemPtr> _items;
-	std::unordered_map<QGraphicsItem*, ItemPtr> _itemsByPointer;
 
 	float64 _lastLineZ = 0.;
 	int _itemNumber = 0;

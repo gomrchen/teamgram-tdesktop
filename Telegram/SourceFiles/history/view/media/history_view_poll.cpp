@@ -863,8 +863,8 @@ void Poll::paintBottom(
 		p.setFont(st::semiboldFont);
 		p.setPen(link ? stm->msgFileThumbLinkFg : stm->msgDateFg);
 		const auto string = showVotes()
-			? tr::lng_polls_view_results(tr::now, tr::upper)
-			: tr::lng_polls_submit_votes(tr::now, tr::upper);
+			? tr::lng_polls_view_results(tr::now, Ui::Text::Upper)
+			: tr::lng_polls_submit_votes(tr::now, Ui::Text::Upper);
 		const auto stringw = st::semiboldFont->width(string);
 		p.drawTextLeft(
 			left + (paintw - stringw) / 2,
@@ -908,7 +908,7 @@ void Poll::paintRecentVoters(
 	pen.setWidth(st::lineWidth);
 
 	auto created = false;
-	for (const auto &recent : ranges::views::reverse(_recentVoters)) {
+	for (auto &recent : _recentVoters) {
 		const auto was = !recent.userpic.null();
 		recent.peer->paintUserpic(p, recent.userpic, x, y, size);
 		if (!was && !recent.userpic.null()) {

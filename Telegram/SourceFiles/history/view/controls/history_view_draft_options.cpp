@@ -205,19 +205,19 @@ PreviewWrap::PreviewWrap(
 
 	const auto session = &_history->session();
 	session->data().viewRepaintRequest(
-	) | rpl::on_next([=](Data::RequestViewRepaint data) {
-		if (_views.contains(data.view)) {
+	) | rpl::start_with_next([=](not_null<const Element*> view) {
+		if (_views.contains(view)) {
 			update();
 		}
 	}, lifetime());
 
-	_selection.changes() | rpl::on_next([=] {
+	_selection.changes() | rpl::start_with_next([=] {
 		update();
 	}, lifetime());
 
 	_box->setAttribute(Qt::WA_OpaquePaintEvent, false);
 
-	_box->paintRequest() | rpl::on_next([=](QRect clip) {
+	_box->paintRequest() | rpl::start_with_next([=](QRect clip) {
 		const auto geometry = Ui::MapFrom(_box, this, rect());
 		const auto fill = geometry.intersected(clip);
 		if (!fill.isEmpty()) {
@@ -443,7 +443,6 @@ void PreviewWrap::paintEvent(QPaintEvent *e) {
 	auto context = _theme->preparePaintContext(
 		_style.get(),
 		rect(),
-		rect(),
 		e->rect(),
 		!window()->isActiveWindow());
 	for (const auto &entry : _entries) {
@@ -619,7 +618,7 @@ void PreviewWrap::initElements() {
 	widthValue(
 	) | rpl::filter([=](int width) {
 		return width > st::msgMinWidth;
-	}) | rpl::on_next([=](int width) {
+	}) | rpl::start_with_next([=](int width) {
 		auto height = _position.y();
 		for (const auto &entry : _entries) {
 			height += entry.view->resizeGetHeight(width);
@@ -685,7 +684,7 @@ void AddFilledSkip(not_null<Ui::VerticalLayout*> container) {
 	const auto skip = container->add(object_ptr<Ui::FixedHeightWidget>(
 		container,
 		st::settingsPrivacySkipTop));
-	skip->paintRequest() | rpl::on_next([=](QRect clip) {
+	skip->paintRequest() | rpl::start_with_next([=](QRect clip) {
 		QPainter(skip).fillRect(clip, st::boxBg);
 	}, skip->lifetime());
 };
@@ -719,7 +718,8 @@ void DraftOptionsBox(
 	state->link = args.usedLink;
 	state->quote = SelectedQuote{
 		replyItem,
-		{ draft.reply.quote, draft.reply.quoteOffset },
+		draft.reply.quote,
+		draft.reply.quoteOffset,
 	};
 	state->forward = std::move(args.forward);
 	state->webpage = draft.webpage;
@@ -775,7 +775,7 @@ void DraftOptionsBox(
 			state->tabs->setSections(labels);
 			state->tabs->setActiveSectionFast(indices[now]);
 			state->tabs->sectionActivated(
-			) | rpl::on_next([=](int index) {
+			) | rpl::start_with_next([=](int index) {
 				state->shown = sections[index];
 			}, box->lifetime());
 		} else {
@@ -783,7 +783,7 @@ void DraftOptionsBox(
 			box->setTitle(hasLink
 				? tr::lng_link_options_header()
 				: hasReply
-				? (state->quote.current().highlight.quote.empty()
+				? (state->quote.current().text.empty()
 					? tr::lng_reply_options_header()
 					: tr::lng_reply_options_quote())
 				: (forwardCount == 1)
@@ -807,12 +807,10 @@ void DraftOptionsBox(
 		auto result = draft.reply;
 		if (const auto current = state->quote.current()) {
 			result.messageId = current.item->fullId();
-			result.quote = current.highlight.quote;
-			result.quoteOffset = current.highlight.quoteOffset;
-//			result.todoItemId = current.highlight.todoItemId;
+			result.quote = current.text;
+			result.quoteOffset = current.offset;
 		} else {
 			result.quote = {};
-//			result.todoItemId = 0;
 		}
 		return result;
 	};
@@ -820,7 +818,7 @@ void DraftOptionsBox(
 			FullReplyTo result,
 			Data::WebPageDraft webpage,
 			std::optional<Data::ForwardOptions> options) {
-		const auto weak = base::make_weak(box);
+		const auto weak = Ui::MakeWeak(box);
 		auto forward = Data::ForwardDraft();
 		if (options) {
 			forward.options = *options;
@@ -829,7 +827,7 @@ void DraftOptionsBox(
 			}
 		}
 		done(std::move(result), std::move(webpage), std::move(forward));
-		if (const auto strong = weak.get()) {
+		if (const auto strong = weak.data()) {
 			strong->closeBox();
 		}
 	};
@@ -848,7 +846,7 @@ void DraftOptionsBox(
 			});
 		}
 
-		const auto weak = base::make_weak(box);
+		const auto weak = Ui::MakeWeak(box);
 		Settings::AddButtonWithIcon(
 			bottom,
 			tr::lng_reply_show_in_chat(),
@@ -856,7 +854,7 @@ void DraftOptionsBox(
 			{ &st::menuIconShowInChat }
 		)->setClickedCallback([=] {
 			highlight(resolveReply());
-			if (const auto strong = weak.get()) {
+			if (const auto strong = weak.data()) {
 				strong->closeBox();
 			}
 		});
@@ -899,17 +897,11 @@ void DraftOptionsBox(
 			const auto small = state->webpage.forceSmallMedia
 				|| (!state->webpage.forceLargeMedia
 					&& state->preview->computeDefaultSmallMedia());
-			const auto hasVideo = state->preview->document
-				&& state->preview->document->isVideoFile();
 			Settings::AddButtonWithIcon(
 				bottom,
 				(small
-					? (hasVideo
-						? tr::lng_link_enlarge_video()
-						: tr::lng_link_enlarge_photo())
-					: (hasVideo
-						? tr::lng_link_shrink_video()
-						: tr::lng_link_shrink_photo())),
+					? tr::lng_link_enlarge_photo()
+					: tr::lng_link_shrink_photo()),
 				st::settingsButton,
 				{ small ? &st::menuIconEnlarge : &st::menuIconShrink }
 			)->setClickedCallback([=] {
@@ -956,7 +948,7 @@ void DraftOptionsBox(
 		AddFilledSkip(bottom);
 
 		if (!hasOnlyForcedForwardedInfo
-			&& HasDropForwardedInfoSetting(items)) {
+			&& !HasOnlyDroppedForwardedInfo(items)) {
 			Settings::AddButtonWithIcon(
 				bottom,
 				(dropNames
@@ -1037,12 +1029,12 @@ void DraftOptionsBox(
 			const auto delay = std::max(page->pendingTill - now, TimeId());
 			base::timer_once(
 				(delay + 1) * crl::time(1000)
-			) | rpl::on_next([=] {
+			) | rpl::start_with_next([=] {
 				state->requestAndSwitch(link, true);
 			}, state->resolveLifetime);
 
 			page->owner().webPageUpdates(
-			) | rpl::on_next([=](not_null<WebPageData*> updated) {
+			) | rpl::start_with_next([=](not_null<WebPageData*> updated) {
 				if (updated == page && !updated->pendingTill) {
 					state->resolveLifetime.destroy();
 					state->performSwitch(link, page);
@@ -1061,7 +1053,7 @@ void DraftOptionsBox(
 		resolver->request(link, force);
 
 		state->resolveLifetime = resolver->resolved(
-		) | rpl::on_next([=](const QString &resolved) {
+		) | rpl::start_with_next([=](const QString &resolved) {
 			if (resolved == link) {
 				state->resolveLifetime.destroy();
 				state->performSwitch(
@@ -1082,14 +1074,14 @@ void DraftOptionsBox(
 
 	state->wrap = box->addRow(
 		object_ptr<PreviewWrap>(box, args.history),
-		style::margins());
+		{});
 	state->wrap->draggingScrollDelta(
-	) | rpl::on_next([=](int delta) {
+	) | rpl::start_with_next([=](int delta) {
 		box->scrollByDraggingDelta(delta);
 	}, state->wrap->lifetime());
 
 	const auto &linkRanges = args.links;
-	state->shown.value() | rpl::on_next([=](Section shown) {
+	state->shown.value() | rpl::start_with_next([=](Section shown) {
 		bottom->clear();
 		state->shownLifetime.destroy();
 		switch (shown) {
@@ -1104,7 +1096,7 @@ void DraftOptionsBox(
 					state->webpage,
 					linkRanges,
 					state->link
-				) | rpl::on_next([=](QString link) {
+				) | rpl::start_with_next([=](QString link) {
 					switchTo(link);
 				}, state->shownLifetime);
 				setupLinkActions();
@@ -1120,7 +1112,7 @@ void DraftOptionsBox(
 		state->quote.value(),
 		state->shown.value()
 	) | rpl::map([=](const SelectedQuote &quote, Section shown) {
-		return (quote.highlight.quote.empty() || shown != Section::Reply)
+		return (quote.text.empty() || shown != Section::Reply)
 			? tr::lng_settings_save()
 			: tr::lng_reply_quote_selected();
 	}) | rpl::flatten_latest();
@@ -1141,7 +1133,7 @@ void DraftOptionsBox(
 		box->closeBox();
 	});
 
-	box->events() | rpl::on_next([=](not_null<QEvent*> e) {
+	box->events() | rpl::start_with_next([=](not_null<QEvent*> e) {
 		if (e->type() == QEvent::KeyPress) {
 			const auto key = static_cast<QKeyEvent*>(e.get())->key();
 			if (key == Qt::Key_Enter || key == Qt::Key_Return) {
@@ -1151,7 +1143,7 @@ void DraftOptionsBox(
 	}, box->lifetime());
 
 	args.show->session().data().itemRemoved(
-	) | rpl::on_next([=](not_null<const HistoryItem*> removed) {
+	) | rpl::start_with_next([=](not_null<const HistoryItem*> removed) {
 		const auto inReply = (state->quote.current().item == removed);
 		if (inReply) {
 			state->quote = SelectedQuote();
@@ -1167,7 +1159,7 @@ void DraftOptionsBox(
 	}, box->lifetime());
 
 	args.show->session().data().itemViewRefreshRequest(
-	) | rpl::on_next([=](not_null<const HistoryItem*> item) {
+	) | rpl::start_with_next([=](not_null<const HistoryItem*> item) {
 		if (state->wrap->hasViewForItem(item)) {
 			state->rebuild();
 		}
@@ -1370,7 +1362,7 @@ void ShowReplyToChatBox(
 				not_null<PeerListBox*> box) {
 			box->addButton(tr::lng_cancel(), [=] { box->closeBox(); });
 
-			box->noSearchSubmits() | rpl::on_next([=] {
+			box->noSearchSubmits() | rpl::start_with_next([=] {
 				controllerRaw->noSearchSubmit();
 			}, box->lifetime());
 		});
@@ -1383,21 +1375,18 @@ void ShowReplyToChatBox(
 	auto chosen = [=](not_null<Data::Thread*> thread) mutable {
 		const auto history = thread->owningHistory();
 		const auto topicRootId = thread->topicRootId();
-		const auto monoforumPeerId = thread->monoforumPeerId();
-		const auto draft = history->localDraft(topicRootId, monoforumPeerId);
+		const auto draft = history->localDraft(topicRootId);
 		const auto textWithTags = draft
 			? draft->textWithTags
 			: TextWithTags();
 		const auto cursor = draft ? draft->cursor : MessageCursor();
 		reply.topicRootId = topicRootId;
-		reply.monoforumPeerId = monoforumPeerId;
 		history->setLocalDraft(std::make_unique<Data::Draft>(
 			textWithTags,
 			reply,
-			SuggestOptions(),
 			cursor,
 			Data::WebPageDraft()));
-		history->clearLocalEditDraft(topicRootId, monoforumPeerId);
+		history->clearLocalEditDraft(topicRootId);
 		history->session().changes().entryUpdated(
 			thread,
 			Data::EntryUpdate::Flag::LocalDraftSet);
@@ -1409,15 +1398,15 @@ void ShowReplyToChatBox(
 	};
 	auto callback = [=, chosen = std::move(chosen)](
 			Controller::Chosen thread) mutable {
-		const auto weak = base::make_weak(state->box);
+		const auto weak = Ui::MakeWeak(state->box);
 		if (!chosen(thread)) {
 			return;
-		} else if (const auto strong = weak.get()) {
+		} else if (const auto strong = weak.data()) {
 			strong->closeBox();
 		}
 	};
 	state->controller->singleChosen(
-	) | rpl::on_next(std::move(callback), state->box->lifetime());
+	) | rpl::start_with_next(std::move(callback), state->box->lifetime());
 }
 
 void EditDraftOptions(EditDraftOptionsArgs &&args) {

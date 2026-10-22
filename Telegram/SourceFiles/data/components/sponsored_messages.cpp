@@ -15,7 +15,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_document.h"
 #include "data/data_file_origin.h"
 #include "data/data_media_preload.h"
-#include "data/data_peer_values.h"
 #include "data/data_photo.h"
 #include "data/data_session.h"
 #include "data/data_user.h"
@@ -24,15 +23,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "lang/lang_keys.h"
 #include "main/main_session.h"
 #include "ui/chat/sponsored_message_bar.h"
-#include "ui/text/text_utilities.h" // tr::rich.
+#include "ui/text/text_utilities.h" // Ui::Text::RichLangValue.
 
 namespace Data {
 namespace {
 
-constexpr auto kMs = crl::time(1000);
 constexpr auto kRequestTimeLimit = 5 * 60 * crl::time(1000);
-
-const auto kFlaggedPreload = ((MediaPreload*)quintptr(0x01));
 
 [[nodiscard]] bool TooEarlyForRequest(crl::time received) {
 	return (received > 0) && (received + kRequestTimeLimit > crl::now());
@@ -56,13 +52,6 @@ template <typename Fields>
 SponsoredMessages::SponsoredMessages(not_null<Main::Session*> session)
 : _session(session)
 , _clearTimer([=] { clearOldRequests(); }) {
-	Data::AmPremiumValue(
-		_session
-	) | rpl::on_next([=](bool premium) {
-		if (premium) {
-			clear();
-		}
-	}, _lifetime);
 }
 
 SponsoredMessages::~SponsoredMessages() {
@@ -84,21 +73,17 @@ void SponsoredMessages::clear() {
 
 void SponsoredMessages::clearOldRequests() {
 	const auto now = crl::now();
-	const auto clear = [&](auto &requests) {
-		while (true) {
-			const auto i = ranges::find_if(requests, [&](const auto &value) {
-				const auto &request = value.second;
-				return !request.requestId
-					&& (request.lastReceived + kRequestTimeLimit <= now);
-			});
-			if (i == end(requests)) {
-				break;
-			}
-			requests.erase(i);
+	while (true) {
+		const auto i = ranges::find_if(_requests, [&](const auto &value) {
+			const auto &request = value.second;
+			return !request.requestId
+				&& (request.lastReceived + kRequestTimeLimit <= now);
+		});
+		if (i == end(_requests)) {
+			break;
 		}
-	};
-	clear(_requests);
-	clear(_requestsForVideo);
+		_requests.erase(i);
+	}
 }
 
 SponsoredMessages::AppendResult SponsoredMessages::append(
@@ -247,11 +232,6 @@ bool SponsoredMessages::canHaveFor(not_null<History*> history) const {
 	return false;
 }
 
-bool SponsoredMessages::canHaveFor(not_null<HistoryItem*> item) const {
-	return item->history()->peer->isBroadcast()
-		&& item->isRegular();
-}
-
 bool SponsoredMessages::isTopBarFor(not_null<History*> history) const {
 	if (peerIsUser(history->peer->id)) {
 		if (const auto user = history->peer->asUser()) {
@@ -283,10 +263,7 @@ void SponsoredMessages::request(not_null<History*> history, Fn<void()> done) {
 		}
 	}
 	request.requestId = _session->api().request(
-		MTPmessages_GetSponsoredMessages(
-			MTP_flags(0),
-			history->peer->input(),
-			MTPint()) // msg_id
+		MTPmessages_GetSponsoredMessages(history->peer->input)
 	).done([=](const MTPmessages_sponsoredMessages &result) {
 		parse(history, result);
 		if (done) {
@@ -295,78 +272,6 @@ void SponsoredMessages::request(not_null<History*> history, Fn<void()> done) {
 	}).fail([=] {
 		_requests.remove(history);
 	}).send();
-}
-
-void SponsoredMessages::requestForVideo(
-		not_null<HistoryItem*> item,
-		Fn<void(SponsoredForVideo)> done) {
-	Expects(done != nullptr);
-
-	if (!canHaveFor(item)) {
-		done({});
-		return;
-	}
-	const auto peer = item->history()->peer;
-	auto &request = _requestsForVideo[peer];
-	if (TooEarlyForRequest(request.lastReceived)) {
-		auto prepared = prepareForVideo(peer);
-		if (prepared.list.empty()
-			|| prepared.state.itemIndex < prepared.list.size()
-			|| prepared.state.leftTillShow > 0) {
-			done(std::move(prepared));
-			return;
-		}
-	}
-	request.callbacks.push_back(std::move(done));
-	if (request.requestId) {
-		return;
-	}
-	{
-		const auto it = _dataForVideo.find(peer);
-		if (it != end(_dataForVideo)) {
-			auto &list = it->second;
-			// Don't rebuild currently displayed messages.
-			const auto proj = [](const Entry &e) {
-				return e.item != nullptr;
-			};
-			if (ranges::any_of(list.entries, proj)) {
-				return;
-			}
-		}
-	}
-	const auto finish = [=] {
-		const auto i = _requestsForVideo.find(peer);
-		if (i != end(_requestsForVideo)) {
-			for (const auto &callback : base::take(i->second.callbacks)) {
-				callback(prepareForVideo(peer));
-			}
-		}
-	};
-	using Flag = MTPmessages_GetSponsoredMessages::Flag;
-	request.requestId = _session->api().request(
-		MTPmessages_GetSponsoredMessages(
-			MTP_flags(Flag::f_msg_id),
-			peer->input(),
-			MTP_int(item->id.bare))
-	).done([=](const MTPmessages_sponsoredMessages &result) {
-		parseForVideo(peer, result);
-		finish();
-	}).fail([=] {
-		_requestsForVideo.remove(peer);
-		finish();
-	}).send();
-}
-
-void SponsoredMessages::updateForVideo(
-		FullMsgId itemId,
-		SponsoredForVideoState state) {
-	if (state.initial()) {
-		return;
-	}
-	const auto i = _dataForVideo.find(_session->data().peer(itemId.peer));
-	if (i != end(_dataForVideo)) {
-		i->second.state = state;
-	}
 }
 
 void SponsoredMessages::parse(
@@ -384,9 +289,12 @@ void SponsoredMessages::parse(
 		_session->data().processChats(data.vchats());
 
 		const auto &messages = data.vmessages().v;
-		auto &list = _data.emplace(history).first->second;
+		auto &list = _data.emplace(history, List()).first->second;
 		list.entries.clear();
 		list.received = crl::now();
+		for (const auto &message : messages) {
+			append(history, list, message);
+		}
 		if (const auto postsBetween = data.vposts_between()) {
 			list.postsBetween = postsBetween->v;
 			list.state = State::InjectToMiddle;
@@ -395,59 +303,8 @@ void SponsoredMessages::parse(
 				? State::AppendToEnd
 				: State::AppendToTopBar;
 		}
-		for (const auto &message : messages) {
-			append([=] {
-				return &_data[history].entries;
-			}, history, message);
-		}
 	}, [](const MTPDmessages_sponsoredMessagesEmpty &) {
 	});
-}
-
-void SponsoredMessages::parseForVideo(
-		not_null<PeerData*> peer,
-		const MTPmessages_sponsoredMessages &list) {
-	auto &request = _requestsForVideo[peer];
-	request.lastReceived = crl::now();
-	request.requestId = 0;
-	if (!_clearTimer.isActive()) {
-		_clearTimer.callOnce(kRequestTimeLimit * 2);
-	}
-
-	list.match([&](const MTPDmessages_sponsoredMessages &data) {
-		_session->data().processUsers(data.vusers());
-		_session->data().processChats(data.vchats());
-
-		const auto history = _session->data().history(peer);
-		const auto &messages = data.vmessages().v;
-		auto &list = _dataForVideo.emplace(peer).first->second;
-		list.entries.clear();
-		list.received = crl::now();
-		list.startDelay = data.vstart_delay().value_or_empty() * kMs;
-		list.betweenDelay = data.vbetween_delay().value_or_empty() * kMs;
-		for (const auto &message : messages) {
-			append([=] {
-				return &_dataForVideo[peer].entries;
-			}, history, message);
-		}
-	}, [](const MTPDmessages_sponsoredMessagesEmpty &) {
-	});
-}
-
-SponsoredForVideo SponsoredMessages::prepareForVideo(
-		not_null<PeerData*> peer) {
-	const auto i = _dataForVideo.find(peer);
-	if (i == end(_dataForVideo) || i->second.entries.empty()) {
-		return {};
-	}
-	return SponsoredForVideo{
-		.list = i->second.entries | ranges::views::transform(
-			&Entry::sponsored
-		) | ranges::to_vector,
-		.startDelay = i->second.startDelay,
-		.betweenDelay = i->second.betweenDelay,
-		.state = i->second.state,
-	};
 }
 
 FullMsgId SponsoredMessages::fillTopBar(
@@ -499,8 +356,8 @@ rpl::producer<> SponsoredMessages::itemRemoved(const FullMsgId &fullId) {
 }
 
 void SponsoredMessages::append(
-		Fn<not_null<std::vector<Entry>*>()> entries,
 		not_null<History*> history,
+		List &list,
 		const MTPSponsoredMessage &message) {
 	const auto &data = message.data();
 	const auto randomId = data.vrandom_id().v;
@@ -511,14 +368,14 @@ void SponsoredMessages::append(
 			data.vmedia()->match([&](const MTPDmessageMediaPhoto &media) {
 				if (const auto tlPhoto = media.vphoto()) {
 					tlPhoto->match([&](const MTPDphoto &data) {
-						mediaPhoto = _session->data().processPhoto(data);
+						mediaPhoto = history->owner().processPhoto(data);
 					}, [](const MTPDphotoEmpty &) {
 					});
 				}
 			}, [&](const MTPDmessageMediaDocument &media) {
 				if (const auto tlDocument = media.vdocument()) {
 					tlDocument->match([&](const MTPDdocument &data) {
-						const auto d = _session->data().processDocument(
+						const auto d = history->owner().processDocument(
 							data,
 							media.valt_documents());
 						if (d->isVideoFile()
@@ -539,12 +396,16 @@ void SponsoredMessages::append(
 		.link = qs(data.vurl()),
 		.buttonText = qs(data.vbutton_text()),
 		.photoId = data.vphoto()
-			? _session->data().processPhoto(*data.vphoto())->id
+			? history->session().data().processPhoto(*data.vphoto())->id
 			: PhotoId(0),
 		.mediaPhotoId = (mediaPhoto ? mediaPhoto->id : 0),
 		.mediaDocumentId = (mediaDocument ? mediaDocument->id : 0),
-		.backgroundEmojiId = BackgroundEmojiIdFromColor(data.vcolor()),
-		.colorIndex = ColorIndexFromColor(data.vcolor()).value_or(0),
+		.backgroundEmojiId = data.vcolor().has_value()
+			? data.vcolor()->data().vbackground_emoji_id().value_or_empty()
+			: uint64(0),
+		.colorIndex = uint8(data.vcolor().has_value()
+			? data.vcolor()->data().vcolor().value_or_empty()
+			: 0),
 		.isLinkInternal = !UrlRequiresConfirmation(qs(data.vurl())),
 		.isRecommended = data.is_recommended(),
 		.canReport = data.is_can_report(),
@@ -554,7 +415,7 @@ void SponsoredMessages::append(
 			tr::now,
 			lt_text,
 			{ .text = qs(*data.vsponsor_info()) },
-			tr::rich)
+			Ui::Text::RichLangValue)
 		: TextWithEntities();
 	auto additionalInfo = TextWithEntities::Simple(
 		data.vadditional_info() ? qs(*data.vadditional_info()) : QString());
@@ -571,24 +432,25 @@ void SponsoredMessages::append(
 		.link = from.link,
 		.sponsorInfo = std::move(sponsorInfo),
 		.additionalInfo = std::move(additionalInfo),
-		.durationMin = data.vmin_display_duration().value_or_empty() * kMs,
-		.durationMax = data.vmax_display_duration().value_or_empty() * kMs,
 	};
-	const auto itemId = FullMsgId(
-		history->peer->id,
-		_session->data().nextLocalMessageId());
-	const auto list = entries();
-	list->push_back({
-		.itemFullId = itemId,
+	list.entries.push_back({
 		.sponsored = std::move(sharedMessage),
 	});
-	auto &entry = list->back();
+	auto &entry = list.entries.back();
+	const auto itemId = entry.itemFullId = FullMsgId(
+		history->peer->id,
+		_session->data().nextLocalMessageId());
 	const auto fileOrigin = FileOrigin(); // No way to refresh in ads.
 
+	static const auto kFlaggedPreload = ((MediaPreload*)quintptr(0x01));
 	const auto preloaded = [=] {
-		const auto list = entries();
-		const auto j = ranges::find(*list, itemId, &Entry::itemFullId);
-		if (j == end(*list)) {
+		const auto i = _data.find(history);
+		if (i == end(_data)) {
+			return;
+		}
+		auto &entries = i->second.entries;
+		const auto j = ranges::find(entries, itemId, &Entry::itemFullId);
+		if (j == end(entries)) {
 			return;
 		}
 		auto &entry = *j;
@@ -686,11 +548,7 @@ SponsoredMessages::Details SponsoredMessages::lookupDetails(
 	if (!entryPtr) {
 		return {};
 	}
-	return lookupDetails(entryPtr->sponsored);
-}
-
-SponsoredMessages::Details SponsoredMessages::lookupDetails(
-		const SponsoredMessage &data) const {
+	const auto &data = entryPtr->sponsored;
 	return {
 		.info = Prepare(data),
 		.link = data.link,

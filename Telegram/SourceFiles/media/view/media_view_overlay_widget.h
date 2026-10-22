@@ -20,7 +20,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "media/view/media_view_playback_controls.h"
 #include "media/view/media_view_open_common.h"
 #include "media/media_common.h"
-#include "platform/platform_text_recognition.h"
 
 class History;
 
@@ -28,12 +27,7 @@ namespace anim {
 enum class activation : uchar;
 } // namespace anim
 
-namespace Calls {
-class GroupCall;
-} // namespace Calls
-
 namespace Data {
-class GroupCall;
 class PhotoMedia;
 class DocumentMedia;
 struct StoriesContext;
@@ -84,8 +78,6 @@ struct ContentLayout;
 
 namespace Media::View {
 
-class VideoStream;
-class PlaybackSponsored;
 class GroupThumbs;
 class Pip;
 
@@ -115,6 +107,15 @@ public:
 	void activate();
 
 	void show(OpenRequest request);
+
+	//void leaveToChildEvent(QEvent *e, QWidget *child) override {
+	//	// e -- from enterEvent() of child TWidget
+	//	updateOverState(Over::None);
+	//}
+	//void enterFromChildEvent(QEvent *e, QWidget *child) override {
+	//	// e -- from leaveEvent() of child TWidget
+	//	updateOver(mapFromGlobal(QCursor::pos()));
+	//}
 
 	void activateControls();
 	void close();
@@ -158,8 +159,6 @@ private:
 		Share,
 		Rotate,
 		More,
-		Draw,
-		Recognize,
 		Icon,
 		Video,
 		Caption,
@@ -171,7 +170,6 @@ private:
 			not_null<DocumentData*>> data;
 		HistoryItem *item = nullptr;
 		MsgId topicRootId = 0;
-		PeerId monoforumPeerId = 0;
 	};
 	enum class SavePhotoVideo {
 		None,
@@ -287,12 +285,8 @@ private:
 	void deleteMedia();
 	void showMediaOverview();
 	void copyMedia();
-	void recognize();
-	void draw();
 	void receiveMouse();
 	void showAttachedStickers();
-	[[nodiscard]] auto scaledRecognitionRect(QPoint position)
-	const -> std::optional<Platform::TextRecognition::RectWithText>;
 	void showDropdown();
 	void handleTouchTimer();
 	void handleDocumentClick();
@@ -304,8 +298,7 @@ private:
 	void showSaveMsgToast(const QString &path, auto phrase);
 	void showSaveMsgToastWith(
 		const QString &path,
-		const TextWithEntities &text,
-		crl::time duration = 0);
+		const TextWithEntities &text);
 	void updateSaveMsg();
 
 	void clearBeforeHide();
@@ -313,7 +306,6 @@ private:
 
 	void assignMediaPointer(DocumentData *document);
 	void assignMediaPointer(not_null<PhotoData*> photo);
-	void assignMediaPointer(std::shared_ptr<Data::GroupCall> call);
 
 	void updateOver(QPoint mpos);
 	void initFullScreen();
@@ -400,9 +392,6 @@ private:
 		anim::activation activation = anim::activation::normal,
 		const Data::CloudTheme &cloud = Data::CloudTheme(),
 		const StartStreaming &startStreaming = StartStreaming());
-	void displayVideoStream(
-		const std::shared_ptr<Data::GroupCall> &call,
-		anim::activation activation = anim::activation::normal);
 	void displayFinished(anim::activation activation);
 	void redisplayContent();
 	void findCurrent();
@@ -422,7 +411,6 @@ private:
 		const StartStreaming &startStreaming = StartStreaming());
 	void startStreamingPlayer(const StartStreaming &startStreaming);
 	void initStreamingThumbnail();
-	void markStreamedReady();
 	void streamingReady(Streaming::Information &&info);
 	[[nodiscard]] bool createStreamingObjects();
 	void handleStreamingUpdate(Streaming::Update &&update);
@@ -516,7 +504,6 @@ private:
 
 	void validatePhotoImage(Image *image, bool blurred);
 	void validatePhotoCurrentImage();
-	void tryStartTextRecognition();
 
 	[[nodiscard]] bool hasCopyMediaRestriction(
 		bool skipPremiumCheck = false) const;
@@ -593,11 +580,9 @@ private:
 
 	QRect _leftNav, _leftNavOver, _leftNavIcon;
 	QRect _rightNav, _rightNavOver, _rightNavIcon;
-	QRect _headerNav, _nameNav, _dateNav, _separatorNav;
+	QRect _headerNav, _nameNav, _dateNav;
 	QRect _rotateNav, _rotateNavOver, _rotateNavIcon;
 	QRect _shareNav, _shareNavOver, _shareNavIcon;
-	QRect _drawNav, _drawNavOver, _drawNavIcon;
-	QRect _recognizeNav, _recognizeNavOver, _recognizeNavIcon;
 	QRect _saveNav, _saveNavOver, _saveNavIcon;
 	QRect _moreNav, _moreNavOver, _moreNavIcon;
 	bool _leftNavVisible = false;
@@ -605,9 +590,6 @@ private:
 	bool _saveVisible = false;
 	bool _shareVisible = false;
 	bool _rotateVisible = false;
-	bool _drawButtonEnabled = true;
-	bool _drawVisible = false;
-	bool _recognizeVisible = false;
 	bool _headerHasLink = false;
 	QString _dateText;
 	QString _headerText;
@@ -671,10 +653,6 @@ private:
 	rpl::event_stream<ChatHelpers::FileChosen> _storiesStickerOrEmojiChosen;
 	std::unique_ptr<Ui::LayerManager> _layerBg;
 
-	std::unique_ptr<VideoStream> _videoStream;
-	QString _callLinkSlug;
-	MsgId _callJoinMessageId;
-
 	const style::icon *_docIcon = nullptr;
 	style::color _docIconColor;
 	QString _docName, _docSize, _docExt;
@@ -696,7 +674,6 @@ private:
 	History *_migrated = nullptr;
 	History *_history = nullptr; // if conversation photos or files overview
 	MsgId _topicRootId = 0;
-	PeerId _monoforumPeerId = 0;
 	PeerData *_peer = nullptr;
 	UserData *_user = nullptr; // if user profile photos overview
 
@@ -744,8 +721,6 @@ private:
 
 	bool _receiveMouse = true;
 	bool _processingKeyPress = false;
-	bool _clickHandlerActive = false;
-	bool _clickHandlerPressed = false;
 
 	bool _touchPress = false;
 	bool _touchMove = false;
@@ -769,13 +744,6 @@ private:
 	rpl::event_stream<bool> _touchbarFullscreenToggled;
 
 	int _verticalWheelDelta = 0;
-
-	Platform::TextRecognition::Result _recognitionResult;
-	uint64 _recognitionPendingSessionUniqueId = 0;
-	PhotoId _recognitionPendingPhotoId = 0;
-	bool _recognitionRetryOnLarge = false;
-	bool _showRecognitionResults = false;
-	Ui::Animations::Simple _recognitionAnimation;
 
 	bool _themePreviewShown = false;
 	uint64 _themePreviewId = 0;

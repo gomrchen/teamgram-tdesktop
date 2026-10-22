@@ -241,12 +241,14 @@ void Media::drawPurchasedTag(
 		if (!amount) {
 			return;
 		}
-		auto text = Ui::Text::Colorized(Ui::CreditsEmojiSmall());
+		const auto session = &item->history()->session();
+		auto text = Ui::Text::Colorized(Ui::CreditsEmojiSmall(session));
 		text.append(Lang::FormatCountDecimal(amount));
 		purchased->text.setMarkedText(
 			st::defaultTextStyle,
 			text,
-			kMarkupTextOptions);
+			kMarkupTextOptions,
+			Core::TextContext({ .session = session }));
 	}
 
 	const auto st = context.st;
@@ -401,7 +403,8 @@ void Media::drawSpoilerTag(
 				tr::lng_sensitive_tag(tr::now));
 			iconSkip = st::mediaMenuIconStealth.width() * 1.4;
 		} else {
-			auto price = Ui::Text::Colorized(Ui::CreditsEmoji());
+			const auto session = &history()->session();
+			auto price = Ui::Text::Colorized(Ui::CreditsEmoji(session));
 			price.append(Lang::FormatCountDecimal(tag->price));
 			text.setMarkedText(
 				st::semiboldTextStyle,
@@ -409,8 +412,9 @@ void Media::drawSpoilerTag(
 					tr::now,
 					lt_price,
 					price,
-					tr::marked),
-				kMarkupTextOptions);
+					Ui::Text::WithEntities),
+				kMarkupTextOptions,
+				Core::TextContext({ .session = session }));
 		}
 		const auto width = iconSkip + text.maxWidth();
 		const auto inner = QRect(0, 0, width, text.minHeight());
@@ -583,10 +587,6 @@ std::unique_ptr<StickerPlayer> Media::stickerTakePlayer(
 
 QImage Media::locationTakeImage() {
 	return QImage();
-}
-
-std::vector<Media::TodoTaskInfo> Media::takeTasksInfo() {
-	return {};
 }
 
 TextState Media::getStateGrouped(

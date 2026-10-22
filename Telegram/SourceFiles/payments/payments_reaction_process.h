@@ -11,17 +11,13 @@ enum class HistoryReactionSource : char;
 
 class HistoryItem;
 
-namespace Calls {
-class GroupCall;
-} // namespace Calls
-
 namespace HistoryView {
 class Element;
 } // namespace HistoryView
 
-namespace Main {
-class SessionShow;
-} // namespace Main
+namespace Ui {
+class Show;
+} // namespace Ui
 
 namespace Window {
 class SessionController;
@@ -36,13 +32,7 @@ void TryAddingPaidReaction(
 	HistoryView::Element *view,
 	int count,
 	std::optional<PeerId> shownPeer,
-	std::shared_ptr<Main::SessionShow> show,
-	Fn<void(bool)> finished = nullptr);
-
-void TryAddingPaidReaction(
-	not_null<Calls::GroupCall*> call,
-	int count,
-	std::shared_ptr<Main::SessionShow> show,
+	std::shared_ptr<Ui::Show> show,
 	Fn<void(bool)> finished = nullptr);
 
 void ShowPaidReactionDetails(

@@ -45,16 +45,6 @@ public:
 		bool hasCover = false);
 	~Step();
 
-	QAccessible::Role accessibilityRole() override {
-		return QAccessible::Role::Dialog;
-	}
-	QString accessibilityName() override {
-		return _titleText.current();
-	}
-	QString accessibilityDescription() override {
-		return _descriptionText.current().text;
-	}
-
 	[[nodiscard]] Main::Account &account() const {
 		return *_account;
 	}
@@ -94,7 +84,6 @@ public:
 	[[nodiscard]] virtual rpl::producer<QString> nextButtonText() const;
 	[[nodiscard]] virtual auto nextButtonStyle() const
 		-> rpl::producer<const style::RoundButton*>;
-	[[nodiscard]] virtual rpl::producer<> nextButtonFocusRequests() const;
 
 	[[nodiscard]] int contentLeft() const;
 	[[nodiscard]] int contentTop() const;

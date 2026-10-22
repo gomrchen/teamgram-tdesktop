@@ -25,6 +25,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/painter.h"
 #include "ui/rect.h"
 #include "history/history_item_components.h"
+#include "history/history_item_helpers.h"
 #include "history/history_item.h"
 #include "history/history.h"
 #include "history/view/history_view_element.h"
@@ -168,14 +169,14 @@ Gif::Gif(
 		_parent->data()->removeFromSharedMediaIndex();
 		setDocumentLinks(_data, realParent, [=] {
 			auto lifetime = std::make_shared<rpl::lifetime>();
-			TTLVoiceStops(fullId) | rpl::on_next([=]() mutable {
+			TTLVoiceStops(fullId) | rpl::start_with_next([=]() mutable {
 				if (lifetime) {
 					base::take(lifetime)->destroy();
 				}
 				if (!isOut) {
 					if (const auto item = data->message(fullId)) {
 						// Destroys this.
-						item->clearMediaAsExpired();
+						ClearMediaAsExpired(item);
 					}
 				}
 			}, *lifetime);
@@ -184,7 +185,7 @@ Gif::Gif(
 		});
 	} else {
 		setDocumentLinks(_data, realParent, [=] {
-			if (!_data->createMediaView()->canBePlayed()
+			if (!_data->createMediaView()->canBePlayed(realParent)
 				|| !_data->isAnimation()
 				|| _data->isVideoMessage()
 				|| !CanPlayInline(_data)) {
@@ -268,7 +269,8 @@ QSize Gif::countOptimalSize() {
 		const auto &entry = _data->session().api().transcribes().entry(
 			_realParent);
 		_transcribe->setLoading(
-			entry.shown && (entry.requestId || entry.pending));
+			entry.shown && (entry.requestId || entry.pending),
+			[=] { repaint(); });
 	}
 
 	const auto minWidth = std::clamp(
@@ -400,7 +402,7 @@ bool Gif::downloadInCorner() const {
 	return _data->isVideoFile()
 		&& (_data->loading() || !autoplayEnabled())
 		&& _realParent->allowsForward()
-		&& _data->canBeStreamed()
+		&& _data->canBeStreamed(_realParent)
 		&& !_data->inappPlaybackFailed();
 }
 
@@ -438,7 +440,7 @@ void Gif::draw(Painter &p, const PaintContext &context) const {
 	const auto st = context.st;
 	const auto sti = context.imageStyle();
 	const auto cornerDownload = downloadInCorner();
-	const auto canBePlayed = _dataMedia->canBePlayed();
+	const auto canBePlayed = _dataMedia->canBePlayed(_realParent);
 	const auto autoplay = autoplayEnabled()
 		&& canBePlayed
 		&& CanPlayInline(_data);
@@ -1403,7 +1405,7 @@ void Gif::drawGrouped(
 	const auto sti = context.imageStyle();
 	_smallGroupPart = !fullFeaturedGrouped(sides);
 	const auto cornerDownload = !_smallGroupPart && downloadInCorner();
-	const auto canBePlayed = _dataMedia->canBePlayed();
+	const auto canBePlayed = _dataMedia->canBePlayed(_realParent);
 
 	const auto revealed = _spoiler
 		? _spoiler->revealAnimation.value(_spoiler->revealed ? 1. : 0.)
@@ -1637,7 +1639,7 @@ ClickHandlerPtr Gif::currentVideoLink() const {
 		? _openl
 		: (_data->loading() && _smallGroupPart)
 		? _cancell
-		: _dataMedia->canBePlayed()
+		: _dataMedia->canBePlayed(_realParent)
 		? _openl
 		: _data->loading()
 		? _cancell
@@ -1879,7 +1881,7 @@ void Gif::updateStatusText() const {
 		statusSize = _data->uploadingData->offset;
 	} else if (!downloadInCorner() && _data->loading()) {
 		statusSize = _data->loadOffset();
-	} else if (dataLoaded() || _dataMedia->canBePlayed()) {
+	} else if (dataLoaded() || _dataMedia->canBePlayed(_realParent)) {
 		statusSize = Ui::FileStatusSizeLoaded;
 	} else {
 		statusSize = Ui::FileStatusSizeReady;
@@ -2004,7 +2006,7 @@ void Gif::playAnimation(bool autoplay) {
 	}
 	if (_streamed) {
 		stopAnimation();
-	} else if (_dataMedia->canBePlayed()) {
+	} else if (_dataMedia->canBePlayed(_realParent)) {
 		if (!autoplayEnabled()) {
 			history()->owner().checkPlayingAnimations();
 		}
@@ -2032,14 +2034,14 @@ void Gif::createStreamedPlayer() {
 		[=] { repaintStreamedContent(); }));
 
 	_streamed->instance.player().updates(
-	) | rpl::on_next_error([=](::Media::Streaming::Update &&update) {
+	) | rpl::start_with_next_error([=](::Media::Streaming::Update &&update) {
 		handleStreamingUpdate(std::move(update));
 	}, [=](::Media::Streaming::Error &&error) {
 		handleStreamingError(std::move(error));
 	}, _streamed->instance.lifetime());
 
 	_streamed->instance.switchQualityRequests(
-	) | rpl::on_next([=](int quality) {
+	) | rpl::start_with_next([=](int quality) {
 		auto now = Core::App().settings().videoQuality();
 		if (now.manual || now.height == quality) {
 			return;
@@ -2199,7 +2201,6 @@ void Gif::ensureTranscribeButton() const {
 	if (_data->isVideoMessage()
 		&& !_parent->data()->media()->ttlSeconds()
 		&& !_parent->data()->isScheduled()
-		&& !_parent->data()->isAdminLogEntry()
 		&& (_data->session().premium()
 			|| _data->session().api().transcribes().trialsSupport())) {
 		if (!_transcribe) {

@@ -7,17 +7,14 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "ui/effects/premium_top_bar.h"
 
-#include "lottie/lottie_icon.h"
 #include "ui/color_contrast.h"
 #include "ui/painter.h"
 #include "ui/effects/premium_graphics.h"
 #include "ui/widgets/labels.h"
 #include "ui/wrap/fade_wrap.h"
-#include "ui/rect.h"
 #include "styles/style_layers.h"
 #include "styles/style_settings.h"
 #include "styles/style_premium.h"
-#include "styles/style_boxes.h"
 
 namespace Ui::Premium {
 namespace {
@@ -110,17 +107,11 @@ TopBar::TopBar(
 , _logo(descriptor.logo)
 , _titleFont(st.titleFont)
 , _titlePadding(st.titlePadding)
-, _aboutMaxWidth(st.aboutMaxWidth)
 , _about(this, std::move(descriptor.about), st.about)
-, _ministars(
-		this,
-		descriptor.optimizeMinistars,
-		(_logo == u"diamond"_q)
-			? MiniStarsType::DiamondStars
-			: MiniStarsType::BiStars) {
+, _ministars(this, descriptor.optimizeMinistars, MiniStars::Type::BiStars) {
 	std::move(
 		descriptor.title
-	) | rpl::on_next([=](QString text) {
+	) | rpl::start_with_next([=](QString text) {
 		_titlePath = QPainterPath();
 		_titlePath.addText(0, _titleFont->ascent, _titleFont, text);
 		update();
@@ -140,7 +131,7 @@ TopBar::TopBar(
 
 	rpl::single() | rpl::then(
 		style::PaletteChanged()
-	) | rpl::on_next([=, starSize = st.starSize] {
+	) | rpl::start_with_next([=] {
 		TopBarAbstract::computeIsDark();
 
 		if (_logo == u"dollar"_q) {
@@ -150,17 +141,6 @@ TopBar::TopBar(
 		} else if (_logo == u"affiliate"_q) {
 			_dollar = ScaleTo(QImage(u":/gui/art/affiliate_logo.png"_q));
 			_ministars.setColorOverride(descriptor.gradientStops);
-		} else if (_logo == u"diamond"_q) {
-			_lottie = Lottie::MakeIcon({
-				.name = u"diamond"_q,
-				.sizeOverride = starSize,
-			});
-			_lottie->animate(
-				[=] { update(_starRect.toRect() + Margins(st::lineWidth)); },
-				0,
-				_lottie->framesCount() - 1);
-			_ministars.setColorOverride(
-				QGradientStops{{ 0, st::windowActiveTextFg->c }});
 		} else if (!_light && !TopBarAbstract::isDark()) {
 			_star.load(Svg());
 			_ministars.setColorOverride(
@@ -179,7 +159,7 @@ TopBar::TopBar(
 		const auto smallTopShadow = CreateChild<FadeShadow>(this);
 		smallTopShadow->setDuration(st::fadeWrapDuration);
 		sizeValue(
-		) | rpl::on_next([=](QSize size) {
+		) | rpl::start_with_next([=](QSize size) {
 			smallTopShadow->resizeToWidth(size.width());
 			smallTopShadow->moveToLeft(
 				0,
@@ -232,11 +212,8 @@ void TopBar::resizeEvent(QResizeEvent *e) {
 	const auto aboutTop = titleTop
 		+ titlePathRect.height()
 		+ _titlePadding.bottom();
-	_about->resizeToWidth(_aboutMaxWidth ? _aboutMaxWidth : availableWidth);
-	_about->moveToLeft(
-		padding.left()
-			+ (_aboutMaxWidth ? (availableWidth - _about->width()) / 2 : 0),
-		aboutTop);
+	_about->resizeToWidth(availableWidth);
+	_about->moveToLeft(padding.left(), aboutTop);
 	_about->setOpacity(_progress.body);
 
 	RpWidget::resizeEvent(e);
@@ -266,22 +243,7 @@ void TopBar::paintEvent(QPaintEvent *e) {
 	if (_progress.top) {
 		_ministars.paint(p);
 	}
-	if (_lottie) {
-		_lottie->paint(
-			p,
-			_starRect.left()
-				+ (_starRect.width() - _lottie->width()) / 2
-				- st::lineWidth * 6,
-			_starRect.top());
-		if (!_lottie->animating() && _lottie->frameIndex() > 0) {
-			_lottie->animate(
-				[=] { update(_starRect.toRect() + Margins(st::lineWidth)); },
-				0,
-				_lottie->framesCount() - 1);
-		}
-	}
 	p.resetTransform();
-
 
 	if (!_dollar.isNull()) {
 		auto hq = PainterHighQualityEnabler(p);
@@ -290,7 +252,9 @@ void TopBar::paintEvent(QPaintEvent *e) {
 		_star.render(&p, _starRect);
 	}
 
-	const auto color = _light ? st().titleFg : st::premiumButtonFg;
+	const auto color = _light
+		? st::settingsPremiumUserTitle.textFg
+		: st::premiumButtonFg;
 	p.setPen(color);
 
 	const auto titlePathRect = _titlePath.boundingRect();

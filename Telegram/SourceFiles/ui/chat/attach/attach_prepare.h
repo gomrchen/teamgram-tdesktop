@@ -79,8 +79,6 @@ struct PreparedFile {
 	[[nodiscard]] bool isGifv() const;
 
 	QString path;
-	QString displayName;
-	TextWithTags caption;
 	QByteArray content;
 	int64 size = 0;
 	std::unique_ptr<PreparedFileInformation> information;
@@ -117,7 +115,7 @@ struct PreparedList {
 		std::vector<int> order);
 	void mergeToEnd(PreparedList &&other, bool cutToAlbumSize = false);
 
-	[[nodiscard]] bool canAddCaption(bool compress) const;
+	[[nodiscard]] bool canAddCaption(bool sendingAlbum, bool compress) const;
 	[[nodiscard]] bool canMoveCaption(
 		bool sendingAlbum,
 		bool compress) const;
@@ -144,6 +142,11 @@ struct PreparedList {
 struct PreparedGroup {
 	PreparedList list;
 	AlbumType type = AlbumType::None;
+
+	[[nodiscard]] bool sentWithCaption() const {
+		return (list.files.size() == 1)
+			|| (type == AlbumType::PhotoVideo);
+	}
 };
 
 [[nodiscard]] std::vector<PreparedGroup> DivideByGroups(
@@ -154,12 +157,15 @@ struct PreparedGroup {
 struct PreparedBundle {
 	std::vector<PreparedGroup> groups;
 	SendFilesWay way;
+	TextWithTags caption;
 	int totalCount = 0;
+	bool sendComment = false;
 	bool ctrlShiftEnter = false;
 };
 [[nodiscard]] std::shared_ptr<PreparedBundle> PrepareFilesBundle(
 	std::vector<PreparedGroup> groups,
 	SendFilesWay way,
+	TextWithTags caption,
 	bool ctrlShiftEnter);
 
 [[nodiscard]] int MaxAlbumItems();

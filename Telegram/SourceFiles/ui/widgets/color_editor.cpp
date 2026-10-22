@@ -17,7 +17,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_boxes.h"
 #include "styles/style_media_view.h"
 
-class ColorEditor::Picker : public Ui::RpWidget {
+class ColorEditor::Picker : public TWidget {
 public:
 	Picker(QWidget *parent, Mode mode, QColor color);
 
@@ -94,7 +94,7 @@ QCursor ColorEditor::Picker::generateCursor() {
 }
 
 ColorEditor::Picker::Picker(QWidget *parent, Mode mode, QColor color)
-: RpWidget(parent)
+: TWidget(parent)
 , _mode(mode) {
 	setCursor(generateCursor());
 
@@ -292,7 +292,7 @@ void ColorEditor::Picker::setFromColor(QColor color) {
 	}
 }
 
-class ColorEditor::Slider : public Ui::RpWidget {
+class ColorEditor::Slider : public TWidget {
 public:
 	enum class Direction {
 		Horizontal,
@@ -365,7 +365,7 @@ ColorEditor::Slider::Slider(
 	Direction direction,
 	Type type,
 	QColor color)
-: RpWidget(parent)
+: TWidget(parent)
 , _direction(direction)
 , _type(type)
 , _color(color.red(), color.green(), color.blue())
@@ -917,7 +917,6 @@ void ColorEditor::prepare() {
 	connect(_blueField, &Ui::MaskedInputField::submitted, submitted);
 	connect(_result, &Ui::MaskedInputField::submitted, submitted);
 
-	setNaturalWidth(st::colorEditWidth);
 	const auto height = st::colorEditSkip
 		+ st::colorPickerSize
 		+ st::colorEditSkip
@@ -930,7 +929,7 @@ void ColorEditor::prepare() {
 		(_hueSlider ? _hueSlider->changed() : rpl::never<>()),
 		(_opacitySlider ? _opacitySlider->changed() : rpl::never<>()),
 		(_lightnessSlider ? _lightnessSlider->changed() : rpl::never<>())
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		updateFromControls();
 	}, lifetime());
 

@@ -22,7 +22,6 @@ class MediaPreviewWidget;
 class SectionMemento;
 struct SectionShow;
 class PasscodeLockWidget;
-class SetupEmailLockWidget;
 namespace Theme {
 struct BackgroundUpdate;
 class WarningWidget;
@@ -50,8 +49,6 @@ public:
 
 	void setupPasscodeLock();
 	void clearPasscodeLock();
-	void setupSetupEmailLock();
-	void clearSetupEmailLock();
 	void setupIntro(Intro::EnterPoint point, QPixmap oldContentCache);
 	void setupMain(MsgId singlePeerShowAtMsgId, QPixmap oldContentCache);
 
@@ -127,7 +124,6 @@ private:
 	QPoint _lastMousePosition;
 
 	object_ptr<Window::PasscodeLockWidget> _passcodeLock = { nullptr };
-	object_ptr<Window::SetupEmailLockWidget> _setupEmailLock = { nullptr };
 	object_ptr<Intro::Widget> _intro = { nullptr };
 	object_ptr<MainWidget> _main = { nullptr };
 	base::unique_qptr<Ui::LayerStackWidget> _layer;

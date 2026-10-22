@@ -17,8 +17,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/event_filter.h"
 #include "ui/chat/chat_style.h"
 #include "ui/layers/generic_box.h"
-#include "ui/boxes/calendar_box.h"
-#include "ui/boxes/choose_date_time.h"
 #include "ui/basic_click_handlers.h"
 #include "ui/rect.h"
 #include "core/shortcuts.h"
@@ -47,7 +45,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mainwindow.h"
 #include "main/main_session.h"
 #include "settings/settings_common.h"
-#include "settings/sections/settings_premium.h"
+#include "settings/settings_premium.h"
 #include "styles/style_layers.h"
 #include "styles/style_boxes.h"
 #include "styles/style_chat.h"
@@ -156,8 +154,7 @@ void EditLinkBox(
 		st::markdownLinkFieldPadding);
 	text->setInstantReplaces(Ui::InstantReplaces::Default());
 	text->setInstantReplacesEnabled(
-		Core::App().settings().replaceEmojiValue(),
-		Core::App().settings().systemTextReplaceValue());
+		Core::App().settings().replaceEmojiValue());
 	Ui::Emoji::SuggestionsController::Init(
 		box->getDelegate()->outerContainer(),
 		text,
@@ -186,11 +183,11 @@ void EditLinkBox(
 			tr::lng_formatting_link_url(),
 			link));
 	url->heightValue(
-	) | rpl::on_next([placeholder](int height) {
+	) | rpl::start_with_next([placeholder](int height) {
 		placeholder->resize(placeholder->width(), height);
 	}, placeholder->lifetime());
 	placeholder->widthValue(
-	) | rpl::on_next([=](int width) {
+	) | rpl::start_with_next([=](int width) {
 		url->resize(width, url->height());
 	}, placeholder->lifetime());
 	url->move(placeholder->pos());
@@ -205,7 +202,7 @@ void EditLinkBox(
 			url->showError();
 			return;
 		}
-		const auto weak = base::make_weak(box);
+		const auto weak = Ui::MakeWeak(box);
 		callback(linkText, linkUrl);
 		if (weak) {
 			box->closeBox();
@@ -213,11 +210,11 @@ void EditLinkBox(
 	};
 
 	text->submits(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		url->setFocusFast();
 	}, text->lifetime());
 	url->submits(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		if (text->getLastText().isEmpty()) {
 			text->setFocusFast();
 		} else {
@@ -247,6 +244,9 @@ void EditLinkBox(
 		}
 	});
 
+	url->customTab(true);
+	text->customTab(true);
+
 	const auto clearFullSelection = [=](not_null<Ui::InputField*> input) {
 		if (input->empty()) {
 			return;
@@ -262,20 +262,17 @@ void EditLinkBox(
 	};
 
 	url->tabbed(
-	) | rpl::on_next([=](not_null<bool*> handled) {
+	) | rpl::start_with_next([=] {
 		clearFullSelection(url);
 		text->setFocus();
-		*handled = true;
 	}, url->lifetime());
-
 	text->tabbed(
-	) | rpl::on_next([=](not_null<bool*> handled) {
+	) | rpl::start_with_next([=] {
 		if (!url->empty()) {
 			url->selectAll();
 		}
 		clearFullSelection(text);
 		url->setFocus();
-		*handled = true;
 	}, text->lifetime());
 }
 
@@ -307,9 +304,9 @@ void EditCodeLanguageBox(
 		const auto name = field->getLastText().trimmed();
 		const auto check = QRegularExpression("^[a-zA-Z0-9\\+\\-]*$");
 		if (check.match(name).hasMatch()) {
-			auto weak = base::make_weak(box);
+			auto weak = Ui::MakeWeak(box);
 			save(name);
-			if (const auto strong = weak.get()) {
+			if (const auto strong = weak.data()) {
 				strong->closeBox();
 			}
 		} else {
@@ -317,7 +314,7 @@ void EditCodeLanguageBox(
 		}
 	};
 	field->submits(
-	) | rpl::on_next(callback, field->lifetime());
+	) | rpl::start_with_next(callback, field->lifetime());
 	box->addButton(tr::lng_settings_save(), callback);
 	box->addButton(tr::lng_cancel(), [=] {
 		box->closeBox();
@@ -404,78 +401,18 @@ Fn<bool(
 		std::shared_ptr<Main::SessionShow> show,
 		not_null<Ui::InputField*> field,
 		const style::InputField *fieldStyle) {
-	const auto weak = base::make_weak(field);
+	const auto weak = Ui::MakeWeak(field);
 	return [=](
 			EditLinkSelection selection,
 			TextWithTags text,
 			QString link,
 			EditLinkAction action) {
 		if (action == EditLinkAction::Check) {
-			return (Ui::InputField::IsValidMarkdownLink(link)
-					&& !TextUtilities::IsMentionLink(link))
-				|| Ui::InputField::IsCustomDateLink(link);
-		}
-		if (Ui::InputField::IsCustomDateLink(link)) {
-			const auto dateStr = link.mid(
-				Ui::InputField::kCustomDateTagStart.size());
-			const auto existingDate = dateStr.toInt();
-			auto callback = [=](
-					const TextWithTags &t,
-					const QString &l) {
-				if (const auto strong = weak.get()) {
-					strong->commitMarkdownLinkEdit(selection, t, l);
-				}
-			};
-			const auto savedCallback = std::make_shared<
-				Fn<void(const TextWithTags &, const QString &)>>(
-					std::move(callback));
-			const auto savedText = std::make_shared<TextWithTags>(text);
-			const auto showDateTimeBox = [=](TimeId time) {
-				const auto dateBox = std::make_shared<
-					base::weak_qptr<Ui::GenericBox>>();
-				*dateBox = show->show(Box(
-					Ui::ChooseDateTimeBox,
-					Ui::ChooseDateTimeBoxArgs{
-						.title = tr::lng_formatting_date_title(),
-						.submit = tr::lng_settings_save(),
-						.done = [=](TimeId result) {
-							const auto dateLink
-								= Ui::InputField::kCustomDateTagStart
-								+ QString::number(result);
-							(*savedCallback)(
-								*savedText,
-								dateLink);
-							if (const auto box = dateBox->get()) {
-								box->closeBox();
-							}
-						},
-						.min = [] { return TimeId(1); },
-						.time = time,
-						.max = [] { return TimeId(2114380800); },
-					}));
-			};
-			if (existingDate > 0) {
-				showDateTimeBox(existingDate);
-			} else {
-				show->show(Box<Ui::CalendarBox>(Ui::CalendarBoxArgs{
-					.month = QDate::currentDate(),
-					.highlighted = QDate::currentDate(),
-					.callback = [=](QDate chosen, Fn<void()> close) {
-						close();
-						const auto midday = QDateTime(
-							chosen,
-							QTime(12, 0));
-						showDateTimeBox(
-							base::unixtime::serialize(midday));
-					},
-					.minDate = QDate(1970, 1, 1),
-					.maxDate = QDate(2036, 12, 31),
-				}));
-			}
-			return true;
+			return Ui::InputField::IsValidMarkdownLink(link)
+				&& !TextUtilities::IsMentionLink(link);
 		}
 		auto callback = [=](const TextWithTags &text, const QString &link) {
-			if (const auto strong = weak.get()) {
+			if (const auto strong = weak.data()) {
 				strong->commitMarkdownLinkEdit(selection, text, link);
 			}
 		};
@@ -515,8 +452,7 @@ void InitMessageFieldHandlers(MessageFieldHandlersArgs &&args) {
 	});
 	field->setInstantReplaces(Ui::InstantReplaces::Default());
 	field->setInstantReplacesEnabled(
-		Core::App().settings().replaceEmojiValue(),
-		Core::App().settings().systemTextReplaceValue());
+		Core::App().settings().replaceEmojiValue());
 	field->setMarkdownReplacesEnabled(rpl::single(Ui::MarkdownEnabledState{
 		Ui::MarkdownEnabled{ std::move(args.allowMarkdownTags) }
 	}));
@@ -548,7 +484,7 @@ void InitMessageFieldHandlers(MessageFieldHandlersArgs &&args) {
 	EditLinkAction action)> FactcheckEditLinkCallback(
 		std::shared_ptr<Main::SessionShow> show,
 		not_null<Ui::InputField*> field) {
-	const auto weak = base::make_weak(field);
+	const auto weak = Ui::MakeWeak(field);
 	return [=](
 			EditLinkSelection selection,
 			TextWithTags text,
@@ -560,14 +496,14 @@ void InitMessageFieldHandlers(MessageFieldHandlersArgs &&args) {
 				return url.startsWith(start) ? url : (start + url);
 			}
 			show->showToast(
-				tr::lng_factcheck_links(tr::now, tr::rich));
+				tr::lng_factcheck_links(tr::now, Ui::Text::RichLangValue));
 			return QString();
 		};
 		if (action == EditLinkAction::Check) {
 			return IsGoodFactcheckUrl(link);
 		}
 		auto callback = [=](const TextWithTags &text, const QString &link) {
-			if (const auto strong = weak.get()) {
+			if (const auto strong = weak.data()) {
 				strong->commitMarkdownLinkEdit(selection, text, link);
 			}
 		};
@@ -606,8 +542,7 @@ Fn<void(not_null<Ui::InputField*>)> FactcheckFieldIniter(
 		});
 		field->setInstantReplaces(Ui::InstantReplaces::Default());
 		field->setInstantReplacesEnabled(
-			Core::App().settings().replaceEmojiValue(),
-			Core::App().settings().systemTextReplaceValue());
+			Core::App().settings().replaceEmojiValue());
 		field->setMarkdownReplacesEnabled(rpl::single(
 			Ui::MarkdownEnabledState{
 				Ui::MarkdownEnabled{
@@ -641,7 +576,6 @@ void InitMessageFieldGeometry(not_null<Ui::InputField*> field) {
 		st::historySendSize.height() - 2 * st::historySendPadding);
 	field->setMaxHeight(st::historyComposeFieldMaxHeight);
 
-	// st::messageSendingAnimationTextFromOffset.
 	field->setDocumentMargin(4.);
 	field->setAdditionalMargin(style::ConvertScale(4) - 4);
 }
@@ -751,20 +685,20 @@ void InitMessageFieldFade(
 	};
 	generateFade();
 	style::PaletteChanged(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		generateFade();
 	}, topFade->lifetime());
 
 	field->sizeValue(
-	) | rpl::on_next_done([=](const QSize &size) {
+	) | rpl::start_with_next_done([=](const QSize &size) {
 		topFade->resizeToWidth(size.width());
 		bottomFade->resizeToWidth(size.width());
 		bottomFade->move(
 			0,
 			size.height() - st::historyComposeFieldFadeHeight);
-	}, [t = base::make_weak(topFade), b = base::make_weak(bottomFade)] {
-		Ui::DestroyChild(t.get());
-		Ui::DestroyChild(b.get());
+	}, [t = Ui::MakeWeak(topFade), b = Ui::MakeWeak(bottomFade)] {
+		Ui::DestroyChild(t.data());
+		Ui::DestroyChild(b.data());
 	}, topFade->lifetime());
 
 	const auto descent = field->st().style.font->descent;
@@ -772,7 +706,7 @@ void InitMessageFieldFade(
 		field->changes(),
 		field->scrollTop().changes() | rpl::to_empty,
 		field->sizeValue() | rpl::to_empty
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		// InputField::changes fires before the auto-resize is being applied,
 		// so for the scroll values to be accurate we enqueue the check.
 		InvokeQueued(field, [=] {
@@ -831,7 +765,7 @@ InlineBotQuery ParseInlineBotQuery(
 				result.username = username.toString();
 				if (const auto peer = session->data().peerByUsername(result.username)) {
 					if (const auto user = peer->asUser()) {
-						result.bot = user;
+						result.bot = peer->asUser();
 					} else {
 						result.bot = nullptr;
 					}
@@ -944,7 +878,7 @@ MessageLinksParser::MessageLinksParser(not_null<Ui::InputField*> field)
 : _field(field)
 , _timer([=] { parse(); }) {
 	_lifetime = _field->changes(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		const auto length = _field->getTextWithTags().text.size();
 		if (!length) {
 			_lastLength = 0;
@@ -1198,14 +1132,14 @@ base::unique_qptr<Ui::RpWidget> CreateDisabledFieldView(
 			+ customFontMarginTop, 0, 0);
 
 	raw->widthValue(
-	) | rpl::on_next([=](int width) {
+	) | rpl::start_with_next([=](int width) {
 		const auto available = width - margins.left() - margins.right();
 		const auto skip = st::historySendDisabledIconSkip;
 		label->resizeToWidth(available - skip);
 		label->moveToLeft(margins.left() + skip, margins.top(), width);
 	}, label->lifetime());
 	raw->paintRequest(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		auto p = QPainter(raw);
 		const auto &icon = st::historySendDisabledIcon;
 		icon.paint(
@@ -1273,11 +1207,11 @@ std::unique_ptr<Ui::RpWidget> TextErrorSendRestriction(
 		text,
 		st::historySendPremiumRequired);
 	label->setAttribute(Qt::WA_TransparentForMouseEvents);
-	raw->paintRequest() | rpl::on_next([=](QRect clip) {
+	raw->paintRequest() | rpl::start_with_next([=](QRect clip) {
 		QPainter(raw).fillRect(clip, st::windowBg);
 	}, raw->lifetime());
 	raw->sizeValue(
-	) | rpl::on_next([=](QSize size) {
+	) | rpl::start_with_next([=](QSize size) {
 		const auto &st = st::historyComposeField;
 		const auto width = size.width();
 		const auto margins = (st.textMargins + st.placeholderMargins);
@@ -1308,11 +1242,11 @@ std::unique_ptr<Ui::RpWidget> PremiumRequiredSendRestriction(
 	const auto link = CreateChild<Ui::LinkButton>(
 		result.get(),
 		tr::lng_restricted_send_non_premium_more(tr::now));
-	raw->paintRequest() | rpl::on_next([=](QRect clip) {
+	raw->paintRequest() | rpl::start_with_next([=](QRect clip) {
 		QPainter(raw).fillRect(clip, st::windowBg);
 	}, raw->lifetime());
 	raw->widthValue(
-	) | rpl::on_next([=](int width) {
+	) | rpl::start_with_next([=](int width) {
 		const auto &st = st::historyComposeField;
 		const auto margins = (st.textMargins + st.placeholderMargins);
 		const auto available = width - margins.left() - margins.right();
@@ -1373,8 +1307,8 @@ std::unique_ptr<Ui::AbstractButton> FrozenWriteRestriction(
 			? tr::lng_frozen_bar_text(
 				lt_arrow,
 				rpl::single(Ui::Text::IconEmoji(&st::textMoreIconEmoji)),
-				tr::marked)
-			: tr::lng_frozen_restrict_text(tr::marked)),
+				Ui::Text::WithEntities)
+			: tr::lng_frozen_restrict_text(Ui::Text::WithEntities)),
 		bar ? st::frozenBarSubtitle : st::frozenRestrictionSubtitle);
 	subtitle->setAttribute(Qt::WA_TransparentForMouseEvents);
 	subtitle->show();
@@ -1382,14 +1316,14 @@ std::unique_ptr<Ui::AbstractButton> FrozenWriteRestriction(
 	const auto shadow = bar ? CreateChild<PlainShadow>(raw) : nullptr;
 	const auto icon = bar ? CreateChild<RpWidget>(raw) : nullptr;
 	if (icon) {
-		icon->paintRequest() | rpl::on_next([=] {
+		icon->paintRequest() | rpl::start_with_next([=] {
 			auto p = QPainter(icon);
 			st::menuIconDisableAttention.paintInCenter(p, icon->rect());
 		}, icon->lifetime());
 		icon->show();
 	}
 
-	raw->sizeValue() | rpl::on_next([=](QSize size) {
+	raw->sizeValue() | rpl::start_with_next([=](QSize size) {
 		if (bar) {
 			const auto toggle = [&](auto &&widget, bool shown) {
 				if (widget->isHidden() == shown) {
@@ -1491,7 +1425,10 @@ void FrozenInfoBox(
 		content,
 		{
 			.name = u"media_forbidden"_q,
-			.sizeOverride = st::normalBoxLottieSize,
+			.sizeOverride = {
+				st::changePhoneIconSize,
+				st::changePhoneIconSize,
+			},
 		},
 		st::settingLocalPasscodeIconPadding);
 	content->add(std::move(icon.widget));
@@ -1510,7 +1447,7 @@ void FrozenInfoBox(
 		raw->add(
 			object_ptr<Ui::FlatLabel>(
 				raw,
-				std::move(title) | rpl::map(tr::bold),
+				std::move(title) | Ui::Text::ToBold(),
 				st.infoTitle ? *st.infoTitle : st::defaultFlatLabel),
 			st::settingsPremiumRowTitlePadding);
 		raw->add(
@@ -1530,30 +1467,29 @@ void FrozenInfoBox(
 			content,
 			tr::lng_frozen_title(),
 			st.title ? *st.title : st::uniqueGiftTitle),
-		st::settingsPremiumRowTitlePadding,
-		style::al_top);
+		st::settingsPremiumRowTitlePadding);
 
 	Ui::AddSkip(content, st::defaultVerticalListSkip * 3);
 
 	infoRow(
 		tr::lng_frozen_subtitle1(),
-		tr::lng_frozen_text1(tr::marked),
+		tr::lng_frozen_text1(Ui::Text::WithEntities),
 		st.violationIcon ? st.violationIcon : &st::menuIconBlock);
 	infoRow(
 		tr::lng_frozen_subtitle2(),
-		tr::lng_frozen_text2(tr::marked),
+		tr::lng_frozen_text2(Ui::Text::WithEntities),
 		st.readOnlyIcon ? st.readOnlyIcon : &st::menuIconLock);
 	infoRow(
 		tr::lng_frozen_subtitle3(),
 		tr::lng_frozen_text3(
 			lt_link,
-			rpl::single(tr::link(u"@SpamBot"_q, info.appealUrl)),
+			rpl::single(Ui::Text::Link(u"@SpamBot"_q, info.appealUrl)),
 			lt_date,
 			rpl::single(TextWithEntities{
 				langDayOfMonthFull(
 					base::unixtime::parse(info.until).date()),
 			}),
-			tr::marked),
+			Ui::Text::WithEntities),
 		st.appealIcon ? st.appealIcon : &st::menuIconHourglass);
 
 	const auto button = box->addButton(
@@ -1565,26 +1501,7 @@ void FrozenInfoBox(
 		- buttonPadding.right();
 	button->widthValue() | rpl::filter([=] {
 		return (button->widthNoMargins() != buttonWidth);
-	}) | rpl::on_next([=] {
+	}) | rpl::start_with_next([=] {
 		button->resizeToWidth(buttonWidth);
 	}, button->lifetime());
-}
-
-Ui::InputField::MimeDataHook WrappedMessageFieldMimeHook(
-		Ui::InputField::MimeDataHook original,
-		not_null<Ui::InputField*> field) {
-	return [field, originalHook = std::move(original)](
-			not_null<const QMimeData*> data,
-			Ui::InputField::MimeAction action) {
-		if (data->hasFormat(u"application/x-telegram-input-field"_q)) {
-			if (action == Ui::InputField::MimeAction::Check) {
-				return true;
-			}
-			const auto text = QString::fromUtf8(
-				data->data(u"application/x-telegram-input-field"_q));
-			field->textCursor().insertText(text);
-			return true;
-		}
-		return originalHook ? originalHook(data, action) : false;
-	};
 }

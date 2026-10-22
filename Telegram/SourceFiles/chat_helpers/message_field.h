@@ -216,7 +216,3 @@ void FrozenInfoBox(
 	not_null<Ui::GenericBox*> box,
 	not_null<Main::Session*> session,
 	FreezeInfoStyleOverride st);
-
-[[nodiscard]] Ui::InputField::MimeDataHook WrappedMessageFieldMimeHook(
-	Ui::InputField::MimeDataHook original,
-	not_null<Ui::InputField*> field);

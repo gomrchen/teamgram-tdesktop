@@ -220,7 +220,7 @@ void Controller::createContent() {
 			const auto wrap = _controls.whoSendWrap->entity();
 
 			Ui::AddSkip(wrap);
-			if (_dataSavedValue->hasDiscussionLink) {
+			if (_dataSavedValue->hasLinkedChat) {
 				Ui::AddSubsectionTitle(wrap, tr::lng_manage_peer_send_title());
 
 				_controls.joinToWrite = wrap->add(EditPeerInfoBox::CreateButton(
@@ -234,7 +234,7 @@ void Controller::createContent() {
 				_controls.joinToWrite->toggleOn(
 					rpl::single(_dataSavedValue->joinToWrite)
 				)->toggledValue(
-				) | rpl::on_next([=](bool toggled) {
+				) | rpl::start_with_next([=](bool toggled) {
 					_dataSavedValue->joinToWrite = toggled;
 				}, wrap->lifetime());
 			} else {
@@ -261,7 +261,7 @@ void Controller::createContent() {
 			_controls.requestToJoin->toggleOn(
 				rpl::single(_dataSavedValue->requestToJoin)
 			)->toggledValue(
-			) | rpl::on_next([=](bool toggled) {
+			) | rpl::start_with_next([=](bool toggled) {
 				_dataSavedValue->requestToJoin = toggled;
 			}, wrap->lifetime());
 
@@ -287,7 +287,7 @@ void Controller::createContent() {
 		_controls.noForwards->toggleOn(
 			rpl::single(_dataSavedValue->noForwards)
 		)->toggledValue(
-		) | rpl::on_next([=](bool toggled) {
+		) | rpl::start_with_next([=](bool toggled) {
 			_dataSavedValue->noForwards = toggled;
 		}, _wrap->lifetime());
 		Ui::AddSkip(_wrap.get());
@@ -296,7 +296,6 @@ void Controller::createContent() {
 			(_isGroup
 				? tr::lng_manage_peer_no_forwards_about
 				: tr::lng_manage_peer_no_forwards_about_channel)());
-
 	}
 	if (_linkOnly) {
 		_controls.inviteLinkWrap->show(anim::type::instant);
@@ -442,11 +441,11 @@ object_ptr<Ui::RpWidget> Controller::createUsernameEdit() {
 			username,
 			_peer->session().createInternalLink(QString())));
 	_controls.usernameInput->heightValue(
-	) | rpl::on_next([placeholder](int height) {
+	) | rpl::start_with_next([placeholder](int height) {
 		placeholder->resize(placeholder->width(), height);
 	}, placeholder->lifetime());
 	placeholder->widthValue(
-	) | rpl::on_next([this](int width) {
+	) | rpl::start_with_next([this](int width) {
 		_controls.usernameInput->resize(
 			width,
 			_controls.usernameInput->height());
@@ -499,7 +498,7 @@ void Controller::privacyChanged(Privacy value) {
 		}
 		_controls.whoSendWrap->toggle(
 			(value == Privacy::HasUsername
-				|| (_dataSavedValue && _dataSavedValue->hasDiscussionLink)),
+				|| (_dataSavedValue && _dataSavedValue->hasLinkedChat)),
 			anim::type::instant);
 	};
 	const auto refreshVisibilities = [&] {
@@ -554,7 +553,7 @@ void Controller::checkUsernameAvailability() {
 	const auto channel = _peer->migrateToOrMe()->asChannel();
 	const auto username = channel ? channel->editableUsername() : QString();
 	_checkUsernameRequestId = _api.request(MTPchannels_CheckUsername(
-		channel ? channel->inputChannel() : MTP_inputChannelEmpty(),
+		channel ? channel->inputChannel : MTP_inputChannelEmpty(),
 		MTP_string(checking)
 	)).done([=](const MTPBool &result) {
 		_checkUsernameRequestId = 0;
@@ -740,11 +739,11 @@ void EditPeerTypeBox::prepare() {
 		_useLocationPhrases,
 		_dataSavedValue);
 	controller->scrollToRequests(
-	) | rpl::on_next([=, raw = content.data()](int y) {
+	) | rpl::start_with_next([=, raw = content.data()](int y) {
 		scrollToY(raw->y() + y);
 	}, lifetime());
 	_focusRequests.events(
-	) | rpl::on_next(
+	) | rpl::start_with_next(
 		[=] {
 			controller->setFocusUsername();
 			if (_usernameError.has_value()) {

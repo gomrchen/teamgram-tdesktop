@@ -39,52 +39,49 @@ SendAsPeers::SendAsPeers(not_null<Session*> session)
 	}) | rpl::distinct_until_changed(
 	) | rpl::filter([=](not_null<PeerData*> peer, int) {
 		return _lists.contains(peer) || _lastRequestTime.contains(peer);
-	}) | rpl::on_next([=](not_null<PeerData*> peer, int) {
+	}) | rpl::start_with_next([=](not_null<PeerData*> peer, int) {
 		refresh(peer, true);
 	}, _lifetime);
 }
 
-bool SendAsPeers::shouldChoose(SendAsKey key) {
-	refresh(key);
-	if (list(key).size() < 2) {
-		return false;
-	}
-	if (key.type == SendAsType::VideoStream) {
-		return true;
-	}
-	const auto channel = key.peer->asBroadcast();
-	return Data::CanSendAnything(key.peer, false)
+bool SendAsPeers::shouldChoose(not_null<PeerData*> peer) {
+	refresh(peer);
+	const auto channel = peer->asBroadcast();
+	return Data::CanSendAnything(peer, false)
+		&& (list(peer).size() > 1)
 		&& (!channel
 			|| channel->addsSignature()
 			|| channel->signatureProfiles());
 }
 
-void SendAsPeers::refresh(SendAsKey key, bool force) {
-	if (key.type != SendAsType::VideoStream && !key.peer->isChannel()) {
+void SendAsPeers::refresh(not_null<PeerData*> peer, bool force) {
+	if (!peer->isChannel()) {
 		return;
 	}
 	const auto now = crl::now();
-	const auto i = _lastRequestTime.find(key);
+	const auto i = _lastRequestTime.find(peer);
 	const auto when = (i == end(_lastRequestTime)) ? -1 : i->second;
 	if (!force && (when >= 0 && now < when + kRequestEach)) {
 		return;
 	}
-	_lastRequestTime[key] = now;
-	request(key);
-	if (key.type == SendAsType::Message) {
-		request({ key.peer, SendAsType::PaidReaction });
-	}
+	_lastRequestTime[peer] = now;
+	request(peer);
+	request(peer, true);
 }
 
-const std::vector<SendAsPeer> &SendAsPeers::list(SendAsKey key) const {
-	if (key.type != SendAsType::VideoStream && !key.peer->isChannel()) {
-		return _onlyMe;
-	}
-	const auto i = _lists.find(key);
+const std::vector<SendAsPeer> &SendAsPeers::list(
+		not_null<PeerData*> peer) const {
+	const auto i = _lists.find(peer);
 	return (i != end(_lists)) ? i->second : _onlyMe;
 }
 
-rpl::producer<SendAsKey> SendAsPeers::updated() const {
+const std::vector<not_null<PeerData*>> &SendAsPeers::paidReactionList(
+		not_null<PeerData*> peer) const {
+	const auto i = _paidReactionLists.find(peer);
+	return (i != end(_paidReactionLists)) ? i->second : _onlyMePaid;
+}
+
+rpl::producer<not_null<PeerData*>> SendAsPeers::updated() const {
 	return _updates.events();
 }
 
@@ -92,8 +89,8 @@ void SendAsPeers::saveChosen(
 		not_null<PeerData*> peer,
 		not_null<PeerData*> chosen) {
 	peer->session().api().request(MTPmessages_SaveDefaultSendAs(
-		peer->input(),
-		chosen->input()
+		peer->input,
+		chosen->input
 	)).send();
 
 	setChosen(peer, chosen->id);
@@ -111,7 +108,7 @@ void SendAsPeers::setChosen(not_null<PeerData*> peer, PeerId chosenId) {
 	} else {
 		_chosen[peer] = chosenId;
 	}
-	_updates.fire({ peer });
+	_updates.fire_copy(peer);
 }
 
 PeerId SendAsPeers::chosen(not_null<PeerData*> peer) const {
@@ -121,7 +118,7 @@ PeerId SendAsPeers::chosen(not_null<PeerData*> peer) const {
 
 not_null<PeerData*> SendAsPeers::resolveChosen(
 		not_null<PeerData*> peer) const {
-	return ResolveChosen(peer, list({ peer }), chosen(peer));
+	return ResolveChosen(peer, list(peer), chosen(peer));
 }
 
 not_null<PeerData*> SendAsPeers::ResolveChosen(
@@ -144,18 +141,14 @@ not_null<PeerData*> SendAsPeers::ResolveChosen(
 		: fallback;
 }
 
-void SendAsPeers::request(SendAsKey key) {
+void SendAsPeers::request(not_null<PeerData*> peer, bool forPaidReactions) {
 	using Flag = MTPchannels_GetSendAs::Flag;
-	key.peer->session().api().request(MTPchannels_GetSendAs(
-		MTP_flags((key.type == SendAsType::PaidReaction)
-			? Flag::f_for_paid_reactions
-			: (key.type == SendAsType::VideoStream)
-			? Flag::f_for_live_stories
-			: Flag()),
-		key.peer->input()
+	peer->session().api().request(MTPchannels_GetSendAs(
+		MTP_flags(forPaidReactions ? Flag::f_for_paid_reactions : Flag()),
+		peer->input
 	)).done([=](const MTPchannels_SendAsPeers &result) {
 		auto parsed = std::vector<SendAsPeer>();
-		auto &owner = key.peer->owner();
+		auto &owner = peer->owner();
 		result.match([&](const MTPDchannels_sendAsPeers &data) {
 			owner.processUsers(data.vusers());
 			owner.processChats(data.vchats());
@@ -172,15 +165,26 @@ void SendAsPeers::request(SendAsKey key) {
 				}
 			}
 		});
-		if (parsed.size() > 1) {
-			auto &now = _lists[key];
-			if (now != parsed) {
-				now = std::move(parsed);
-				_updates.fire_copy(key);
+		if (forPaidReactions) {
+			auto peers = parsed | ranges::views::transform(
+				&SendAsPeer::peer
+			) | ranges::to_vector;
+			if (!peers.empty()) {
+				_paidReactionLists[peer] = std::move(peers);
+			} else {
+				_paidReactionLists.remove(peer);
 			}
-		} else if (const auto i = _lists.find(key); i != end(_lists)) {
-			_lists.erase(i);
-			_updates.fire_copy(key);
+		} else {
+			if (parsed.size() > 1) {
+				auto &now = _lists[peer];
+				if (now != parsed) {
+					now = std::move(parsed);
+					_updates.fire_copy(peer);
+				}
+			} else if (const auto i = _lists.find(peer); i != end(_lists)) {
+				_lists.erase(i);
+				_updates.fire_copy(peer);
+			}
 		}
 	}).send();
 }

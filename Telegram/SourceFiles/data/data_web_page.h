@@ -16,7 +16,6 @@ class ChannelData;
 namespace Data {
 class Session;
 struct UniqueGift;
-struct StarGift;
 } // namespace Data
 
 namespace Iv {
@@ -50,16 +49,12 @@ enum class WebPageType : uint8 {
 	Theme,
 	Story,
 	StickerSet,
-	StoryAlbum,
-	GiftCollection,
-	Auction,
 
 	Article,
 	ArticleWithIV,
 
 	VoiceChat,
 	Livestream,
-	ConferenceCall,
 
 	Factcheck,
 };
@@ -87,11 +82,6 @@ struct WebPageStickerSet {
 
 };
 
-struct WebPageAuction {
-	std::shared_ptr<Data::StarGift> auctionGift;
-	TimeId endDate = 0;
-};
-
 struct WebPageData {
 	WebPageData(not_null<Data::Session*> owner, const WebPageId &id);
 	~WebPageData();
@@ -113,7 +103,6 @@ struct WebPageData {
 		std::unique_ptr<Iv::Data> newIv,
 		std::unique_ptr<WebPageStickerSet> newStickerSet,
 		std::shared_ptr<Data::UniqueGift> newUniqueGift,
-		std::unique_ptr<WebPageAuction> newAuction,
 		int newDuration,
 		const QString &newAuthor,
 		bool newHasLargeMedia,
@@ -145,7 +134,6 @@ struct WebPageData {
 	std::unique_ptr<Iv::Data> iv;
 	std::unique_ptr<WebPageStickerSet> stickerSet;
 	std::shared_ptr<Data::UniqueGift> uniqueGift;
-	std::unique_ptr<WebPageAuction> auction;
 	int duration = 0;
 	TimeId pendingTill = 0;
 	uint32 version : 29 = 0;

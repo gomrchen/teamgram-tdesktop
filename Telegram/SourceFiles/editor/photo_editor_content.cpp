@@ -42,7 +42,7 @@ PhotoEditorContent::PhotoEditorContent(
 	rpl::combine(
 		_modifications.value(),
 		sizeValue()
-	) | rpl::on_next([=](
+	) | rpl::start_with_next([=](
 			const PhotoModifications &mods, const QSize &size) {
 		if (size.isEmpty()) {
 			return;
@@ -85,16 +85,12 @@ PhotoEditorContent::PhotoEditorContent(
 	}, lifetime());
 
 	paintRequest(
-	) | rpl::on_next([=](const QRect &clip) {
+	) | rpl::start_with_next([=](const QRect &clip) {
 		auto p = QPainter(this);
 
 		p.fillRect(clip, Qt::transparent);
-		if (_mode.mode == PhotoEditorMode::Mode::Paint) {
-			_paint->paintImage(p, _photo->pix(_photoSize));
-		} else {
-			p.setTransform(_imageMatrix);
-			p.drawPixmap(_imageRect, _photo->pix(_imageRect.size()));
-		}
+		p.setTransform(_imageMatrix);
+		p.drawPixmap(_imageRect, _photo->pix(_imageRect.size()));
 	}, lifetime());
 
 	setupDragArea();
@@ -129,8 +125,6 @@ void PhotoEditorContent::applyMode(const PhotoEditorMode &mode) {
 	_paint->setAttribute(Qt::WA_TransparentForMouseEvents, isTransform);
 	if (!isTransform) {
 		_paint->updateUndoState();
-	} else {
-		_paint->resetView();
 	}
 
 	if (mode.action == PhotoEditorMode::Action::Discard) {
@@ -139,7 +133,6 @@ void PhotoEditorContent::applyMode(const PhotoEditorMode &mode) {
 		_paint->keepResult();
 	}
 	_mode = mode;
-	update();
 }
 
 void PhotoEditorContent::applyBrush(const Brush &brush) {

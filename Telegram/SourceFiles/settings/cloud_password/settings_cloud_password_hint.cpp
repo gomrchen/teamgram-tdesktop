@@ -75,13 +75,14 @@ void Hint::setupContent() {
 
 	Ui::AddSkip(content, st::settingLocalPasscodeDescriptionBottomSkip);
 
-	const auto newInput = AddWrappedField(
+	const auto wrap = AddWrappedField(
 		content,
 		tr::lng_cloud_password_hint(),
 		currentStepDataHint);
+	const auto newInput = wrap->entity();
 	const auto error = AddError(content, nullptr);
 	newInput->changes(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		error->hide();
 	}, newInput->lifetime());
 	AddSkipInsteadOfField(content);
@@ -95,7 +96,7 @@ void Hint::setupContent() {
 				currentStepData.processRecover.checkedCode,
 				currentStepData.password,
 				hint
-			) | rpl::on_error_done([=](const QString &type) {
+			) | rpl::start_with_error_done([=](const QString &type) {
 				_requestLifetime.destroy();
 
 				error->show();
@@ -121,7 +122,7 @@ void Hint::setupContent() {
 	};
 
 	AddLinkButton(
-		newInput,
+		wrap,
 		tr::lng_settings_cloud_password_skip_hint()
 	)->setClickedCallback([=] {
 		save(QString());
@@ -144,7 +145,7 @@ void Hint::setupContent() {
 	});
 
 	const auto submit = [=] { button->clicked({}, Qt::LeftButton); };
-	newInput->submits() | rpl::on_next(submit, newInput->lifetime());
+	newInput->submits() | rpl::start_with_next(submit, newInput->lifetime());
 
 	setFocusCallback([=] { newInput->setFocus(); });
 

@@ -9,7 +9,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "media/player/media_player_instance.h"
 #include "info/media/info_media_list_widget.h"
-#include "info/saved/info_saved_music_widget.h"
 #include "history/history.h"
 #include "history/history_item.h"
 #include "data/data_session.h"
@@ -100,7 +99,7 @@ void Panel::updateControlsGeometry() {
 	if (scrollHeight > 0) {
 		_scroll->setGeometryToRight(contentRight(), scrollTop, width, scrollHeight);
 	}
-	if (const auto widget = static_cast<RpWidget*>(_scroll->widget())) {
+	if (const auto widget = static_cast<TWidget*>(_scroll->widget())) {
 		widget->resizeToWidth(width);
 	}
 }
@@ -158,7 +157,7 @@ void Panel::paintEvent(QPaintEvent *e) {
 		| RectPart::Bottom
 		| (rtl() ? RectPart::Left : RectPart::Right)
 		| RectPart::Top;
-	Ui::Shadow::paint(p, shadowedRect, width(), st::roundShadowRadius8px, shadowedSides);
+	Ui::Shadow::paint(p, shadowedRect, width(), st::defaultRoundShadow, shadowedSides);
 	Ui::FillRoundRect(p, shadowedRect, st::menuBg, Ui::MenuCorners);
 }
 
@@ -210,7 +209,7 @@ void Panel::ensureCreated() {
 
 	_refreshListLifetime = instance()->playlistChanges(
 		AudioMsgId::Type::Song
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		refreshList();
 	});
 	refreshList();
@@ -218,7 +217,7 @@ void Panel::ensureCreated() {
 	macWindowDeactivateEvents(
 	) | rpl::filter([=] {
 		return !isHidden();
-	}) | rpl::on_next([=] {
+	}) | rpl::start_with_next([=] {
 		leaveEvent(nullptr);
 	}, _refreshListLifetime);
 
@@ -228,7 +227,6 @@ void Panel::ensureCreated() {
 void Panel::refreshList() {
 	const auto current = instance()->current(AudioMsgId::Type::Song);
 	const auto contextId = current.contextId();
-	auto savedMusicItem = false;
 	const auto peer = [&]() -> PeerData* {
 		if (const auto document = current.audio()) {
 			if (&document->session() != &session()) {
@@ -243,12 +241,9 @@ void Panel::refreshList() {
 		const auto document = media ? media->document() : nullptr;
 		if (!document
 			|| !document->isSharedMediaMusic()
-			|| (!item->isRegular()
-				&& !item->isScheduled()
-				&& !item->isSavedMusicItem())) {
+			|| (!item->isRegular() && !item->isScheduled())) {
 			return nullptr;
 		}
-		savedMusicItem = item->isSavedMusicItem();
 		const auto result = item->history()->peer;
 		if (const auto migrated = result->migrateTo()) {
 			return migrated;
@@ -256,19 +251,13 @@ void Panel::refreshList() {
 		return result;
 	}();
 	const auto migrated = peer ? peer->migrateFrom() : nullptr;
-	const auto listPeer = savedMusicItem ? nullptr : peer;
-	const auto listMusicPeer = savedMusicItem ? peer : nullptr;
-	const auto listMigratedPeer = savedMusicItem ? nullptr : migrated;
-	if (_listPeer != listPeer
-		|| _listMusicPeer != listMusicPeer
-		|| _listMigratedPeer != listMigratedPeer) {
+	if (_listPeer != peer || _listMigratedPeer != migrated) {
 		_scroll->takeWidget<QWidget>().destroy();
-		_listPeer = _listMusicPeer = _listMigratedPeer = nullptr;
+		_listPeer = _listMigratedPeer = nullptr;
 	}
-	if ((listPeer && !_listPeer) || (listMusicPeer && !_listMusicPeer)) {
-		_listPeer = listPeer;
-		_listMusicPeer = listMusicPeer;
-		_listMigratedPeer = listMigratedPeer;
+	if (peer && !_listPeer) {
+		_listPeer = peer;
+		_listMigratedPeer = migrated;
 		auto list = object_ptr<ListWidget>(this, infoController());
 
 		const auto weak = _scroll->setOwnedWidget(std::move(list));
@@ -277,19 +266,19 @@ void Panel::refreshList() {
 		updateControlsGeometry();
 
 		weak->checkForHide(
-		) | rpl::on_next([this] {
+		) | rpl::start_with_next([this] {
 			if (!rect().contains(mapFromGlobal(QCursor::pos()))) {
 				_hideTimer.callOnce(kDelayedHideTimeout);
 			}
 		}, weak->lifetime());
 
 		weak->heightValue(
-		) | rpl::on_next([this](int newHeight) {
+		) | rpl::start_with_next([this](int newHeight) {
 			listHeightUpdated(newHeight);
 		}, weak->lifetime());
 
 		weak->scrollToRequests(
-		) | rpl::on_next([this](int newScrollTop) {
+		) | rpl::start_with_next([this](int newScrollTop) {
 			_scroll->scrollToY(newScrollTop);
 		}, weak->lifetime());
 
@@ -298,19 +287,15 @@ void Panel::refreshList() {
 		rpl::combine(
 			_scroll->scrollTopValue(),
 			_scroll->heightValue()
-		) | rpl::on_next([=](int top, int height) {
+		) | rpl::start_with_next([=](int top, int height) {
 			const auto bottom = top + height;
 			weak->setVisibleTopBottom(top, bottom);
 		}, weak->lifetime());
 
-		auto musicMemento = Info::Saved::MusicMemento(peer);
-		auto mediaMemento = Info::Media::Memento(
+		auto memento = Info::Media::Memento(
 			peer,
 			migratedPeerId(),
-			(listMusicPeer
-				? Storage::SharedMediaType::MusicFile
-				: section().mediaType()));
-		auto &memento = listMusicPeer ? musicMemento.media() : mediaMemento;
+			section().mediaType());
 		memento.setAroundId(contextId);
 		memento.setIdsLimit(kPlaylistIdsLimit);
 		memento.setScrollTopItem({ contextId, peer->session().uniqueId() });
@@ -323,14 +308,12 @@ void Panel::performDestroy() {
 	if (!_scroll->widget()) return;
 
 	_scroll->takeWidget<QWidget>().destroy();
-	_listPeer = _listMusicPeer = _listMigratedPeer = nullptr;
+	_listPeer = _listMigratedPeer = nullptr;
 	_refreshListLifetime.destroy();
 }
 
 Info::Key Panel::key() const {
-	return _listMusicPeer
-		? Info::Key(Info::Saved::MusicTag{ _listMusicPeer })
-		: Info::Key(_listPeer);
+	return Info::Key(_listPeer);
 }
 
 PeerData *Panel::migrated() const {
@@ -338,9 +321,7 @@ PeerData *Panel::migrated() const {
 }
 
 Info::Section Panel::section() const {
-	return _listMusicPeer
-		? Info::Section(Info::Section::Type::SavedMusic)
-		: Info::Section(Info::Section::MediaType::MusicFile);
+	return Info::Section(Info::Section::MediaType::MusicFile);
 }
 
 void Panel::startShow() {

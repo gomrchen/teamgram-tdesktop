@@ -10,8 +10,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/chat/message_bubble.h"
 #include "ui/chat/chat_style.h"
 #include "ui/effects/reaction_fly_animation.h"
-#include "ui/text/custom_emoji_helper.h"
-#include "ui/text/format_values.h"
 #include "ui/text/text_options.h"
 #include "ui/text/text_utilities.h"
 #include "ui/painter.h"
@@ -23,7 +21,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/view/media/history_view_media.h"
 #include "history/view/history_view_message.h"
 #include "history/view/history_view_cursor_state.h"
-#include "base/unixtime.h"
 #include "chat_helpers/emoji_interactions.h"
 #include "core/click_handler_types.h"
 #include "main/main_session.h"
@@ -37,39 +34,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_dialogs.h"
 
 namespace HistoryView {
-namespace {
-
-[[nodiscard]] QString SchedulePeriodText(TimeId period) {
-	struct Entry {
-		TimeId period = 0;
-		QString text;
-	};
-	const auto map = std::vector<Entry>{
-		{ 60, u"minutely"_q },
-		{ 300, u"5-minutely"_q },
-		{ 24 * 60 * 60, tr::lng_repeated_daily(tr::now) },
-		{ 7 * 24 * 60 * 60, tr::lng_repeated_weekly(tr::now) },
-		{ 14 * 24 * 60 * 60, tr::lng_repeated_biweekly(tr::now) },
-		{ 30 * 24 * 60 * 60, tr::lng_repeated_monthly(tr::now) },
-		{
-			91 * 24 * 60 * 60,
-			tr::lng_repeated_every_month(tr::now, lt_count, 3)
-		},
-		{
-			182 * 24 * 60 * 60,
-			tr::lng_repeated_every_month(tr::now, lt_count, 6)
-		},
-		{ 365 * 24 * 60 * 60, tr::lng_repeated_yearly(tr::now) },
-	};
-	for (const auto &entry : map) {
-		if (entry.period >= period) {
-			return entry.text;
-		}
-	}
-	return map.back().text;
-}
-
-} // namespace
 
 struct BottomInfo::Effect {
 	mutable std::unique_ptr<Ui::ReactionFlyAnimation> animation;
@@ -138,12 +102,10 @@ int BottomInfo::firstLineWidth() const {
 
 bool BottomInfo::isWide() const {
 	return (_data.flags & Data::Flag::Edited)
-		|| _data.scheduleRepeatPeriod
 		|| !_data.author.isEmpty()
 		|| !_views.isEmpty()
 		|| !_replies.isEmpty()
-		|| _effect
-		|| _data.tonStake;
+		|| _effect;
 }
 
 TextState BottomInfo::textState(
@@ -236,7 +198,7 @@ ClickHandlerPtr BottomInfo::replayEffectLink(
 	const auto weak = base::make_weak(view);
 	return std::make_shared<LambdaClickHandler>([=](ClickContext context) {
 		const auto my = context.other.value<ClickHandlerContext>();
-		if ([[maybe_unused]] const auto controller = my.sessionWindow.get()) {
+		if (const auto controller = my.sessionWindow.get()) {
 			if (const auto strong = weak.get()) {
 				strong->delegate()->elementStartEffect(strong, nullptr);
 			}
@@ -450,14 +412,12 @@ void BottomInfo::layoutDateText() {
 		? (tr::lng_edited(tr::now) + ' ')
 		: (_data.flags & Data::Flag::EstimateDate)
 		? (tr::lng_approximate(tr::now) + ' ')
-		: _data.scheduleRepeatPeriod
-		? (SchedulePeriodText(_data.scheduleRepeatPeriod) + ' ')
 		: QString();
 	const auto author = _data.author;
 	const auto prefix = !author.isEmpty() ? u", "_q : QString();
-	const auto date = edited + ((_data.flags & Data::Flag::ForwardedDate)
-		? Ui::FormatDateTimeSavedFrom(_data.date)
-		: QLocale().toString(_data.date.time(), QLocale::ShortFormat));
+	const auto date = edited + QLocale().toString(
+		_data.date.time(),
+		QLocale::ShortFormat);
 	const auto afterAuthor = prefix + date;
 	const auto afterAuthorWidth = st::msgDateFont->width(afterAuthor);
 	const auto authorWidth = st::msgDateFont->width(author);
@@ -474,33 +434,18 @@ void BottomInfo::layoutDateText() {
 		: name.isEmpty()
 		? date
 		: (name + afterAuthor);
-	auto helper = Ui::Text::CustomEmojiHelper(
-		Core::TextContext({ .session = &_reactionsOwner->session() }));
 	auto marked = TextWithEntities();
 	if (const auto count = _data.stars) {
 		marked.append(
 			Ui::Text::IconEmoji(&st::starIconEmojiSmall)
 		).append(Lang::FormatCountToShort(count).string).append(u", "_q);
 	}
-	if (const auto stake = _data.tonStake) {
-		marked.append(
-			QString::number(stake / 1e9)
-		).append(helper.image({
-			.image = Ui::Emoji::SinglePixmap(
-				Ui::Emoji::Find(QString::fromUtf8("\xf0\x9f\x92\x8e")),
-				Ui::Emoji::GetSizeNormal()).toImage().scaledToHeight(
-					st::stakeIconEmojiSize * style::DevicePixelRatio(),
-					Qt::SmoothTransformation),
-			.margin = QMargins(0, st::stakeIconEmojiTop, 0, 0),
-			.textColor = false,
-		})).append("  ");
-	}
 	marked.append(full);
 	_authorEditedDate.setMarkedText(
 		st::msgDateTextStyle,
 		marked,
 		Ui::NameTextOptions(),
-		helper.context());
+		Core::TextContext({ .session = &_reactionsOwner->session() }));
 }
 
 void BottomInfo::layoutViewsText() {
@@ -571,6 +516,19 @@ BottomInfo::Effect BottomInfo::prepareEffectWithId(EffectId id) {
 	auto result = Effect{ .id = id };
 	_reactionsOwner->preloadEffectImageFor(id);
 	return result;
+}
+
+void BottomInfo::animateEffect(
+		Ui::ReactionFlyAnimationArgs &&args,
+		Fn<void()> repaint) {
+	if (!_effect || args.id.custom() != _effect->id) {
+		return;
+	}
+	_effect->animation = std::make_unique<Ui::ReactionFlyAnimation>(
+		_reactionsOwner,
+		args.translated(QPoint(width(), height())),
+		std::move(repaint),
+		st::effectInfoImage);
 }
 
 auto BottomInfo::takeEffectAnimation()
@@ -653,19 +611,14 @@ BottomInfo::Data BottomInfoDataFromMessage(not_null<Message*> message) {
 		result.flags |= Flag::Sending;
 	}
 	if (!item->history()->peer->isUser()) {
+		const auto media = message->media();
 		const auto mine = PaidInformation{
 			.messages = 1,
 			.stars = item->starsPaid(),
 		};
-		const auto media = message->media();
 		auto info = media ? media->paidInformation().value_or(mine) : mine;
 		if (const auto total = info.stars) {
 			result.stars = total;
-		}
-	}
-	if (const auto media = item->media()) {
-		if (const auto outcome = media->diceGameOutcome()) {
-			result.tonStake = outcome.stakeNanoTon;
 		}
 	}
 	const auto forwarded = item->Get<HistoryMessageForwarded>();
@@ -674,22 +627,6 @@ BottomInfo::Data BottomInfoDataFromMessage(not_null<Message*> message) {
 	}
 	if (item->awaitingVideoProcessing()) {
 		result.flags |= Flag::EstimateDate;
-	}
-	if (item->isScheduled()) {
-		result.scheduleRepeatPeriod = item->scheduleRepeatPeriod();
-	}
-	if (!forwarded) {
-		return result;
-	}
-	if (forwarded->savedFromMsgId && forwarded->savedFromDate) {
-		result.date = base::unixtime::parse(forwarded->savedFromDate);
-		result.flags |= Flag::ForwardedDate;
-	} else if (forwarded->originalDate
-		&& (message->context() == Context::SavedSublist
-			|| item->history()->peer->isSelf())
-		&& !item->externalReply()) {
-		result.date = base::unixtime::parse(forwarded->originalDate);
-		result.flags |= Flag::ForwardedDate;
 	}
 	// We don't want to pass and update it in Data for now.
 	//if (item->unread()) {

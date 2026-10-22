@@ -142,12 +142,13 @@ void ConfirmSubscriptionBox(
 	const auto content = box->verticalLayout();
 
 	Ui::AddSkip(content, st::confirmInvitePhotoTop);
-	const auto userpic = content->add(
-		object_ptr<Ui::RpWidget>(content),
-		style::al_top);
+	const auto userpicWrap = content->add(
+		object_ptr<Ui::CenterWrap<>>(
+			content,
+			object_ptr<Ui::RpWidget>(content)));
+	const auto userpic = userpicWrap->entity();
 	const auto photoSize = st::confirmInvitePhotoSize;
 	userpic->resize(Size(photoSize));
-	userpic->setNaturalWidth(photoSize);
 	const auto creditsIconSize = photoSize / 3;
 	const auto creditsIconCallback =
 		Ui::PaintOutlinedColoredCreditsIconCallback(
@@ -159,7 +160,7 @@ void ConfirmSubscriptionBox(
 	state->frame.setDevicePixelRatio(style::DevicePixelRatio());
 	const auto options = Images::Option::RoundCircle;
 	userpic->paintRequest(
-	) | rpl::on_next([=, small = Data::PhotoSize::Small] {
+	) | rpl::start_with_next([=, small = Data::PhotoSize::Small] {
 		state->frame.fill(Qt::transparent);
 		{
 			auto p = QPainter(&state->frame);
@@ -187,16 +188,16 @@ void ConfirmSubscriptionBox(
 		}
 		auto p = QPainter(userpic);
 		p.drawImage(0, 0, state->frame);
-	}, userpic->lifetime());
-	userpic->setAttribute(Qt::WA_TransparentForMouseEvents);
+	}, userpicWrap->lifetime());
+	userpicWrap->setAttribute(Qt::WA_TransparentForMouseEvents);
 	if (photo) {
 		state->photoMedia = photo->createMediaView();
 		state->photoMedia->wanted(Data::PhotoSize::Small, Data::FileOrigin());
 		if (!state->photoMedia->image(Data::PhotoSize::Small)) {
 			session->downloaderTaskFinished(
-			) | rpl::on_next([=] {
+			) | rpl::start_with_next([=] {
 				userpic->update();
-			}, userpic->lifetime());
+			}, userpicWrap->entity()->lifetime());
 		}
 	} else {
 		state->photoEmpty = std::make_unique<Ui::EmptyUserpic>(
@@ -214,45 +215,47 @@ void ConfirmSubscriptionBox(
 		2.);
 
 	box->addRow(
-		object_ptr<Ui::FlatLabel>(
+		object_ptr<Ui::CenterWrap<Ui::FlatLabel>>(
 			box,
-			tr::lng_channel_invite_subscription_title(),
-			st::inviteLinkSubscribeBoxTitle),
-		style::al_top);
+			object_ptr<Ui::FlatLabel>(
+				box,
+				tr::lng_channel_invite_subscription_title(),
+				st::inviteLinkSubscribeBoxTitle)));
 	box->addRow(
-		object_ptr<Ui::FlatLabel>(
+		object_ptr<Ui::CenterWrap<Ui::FlatLabel>>(
 			box,
-			tr::lng_channel_invite_subscription_about(
-				lt_channel,
-				rpl::single(tr::bold(name)),
-				lt_price,
-				tr::lng_credits_summary_options_credits(
-					lt_count,
-					rpl::single(amount) | tr::to_count(),
-					tr::bold),
-				tr::marked),
-			st::inviteLinkSubscribeBoxAbout),
-		style::al_top);
+			object_ptr<Ui::FlatLabel>(
+				box,
+				tr::lng_channel_invite_subscription_about(
+					lt_channel,
+					rpl::single(Ui::Text::Bold(name)),
+					lt_price,
+					tr::lng_credits_summary_options_credits(
+						lt_count,
+						rpl::single(amount) | tr::to_count(),
+						Ui::Text::Bold),
+					Ui::Text::WithEntities),
+				st::inviteLinkSubscribeBoxAbout)));
 	Ui::AddSkip(content);
 	box->addRow(
-		object_ptr<Ui::FlatLabel>(
+		object_ptr<Ui::CenterWrap<Ui::FlatLabel>>(
 			box,
-			tr::lng_channel_invite_subscription_terms(
-				lt_link,
-				rpl::combine(
-					tr::lng_paid_react_agree_link(),
-					tr::lng_group_invite_subscription_about_url()
-				) | rpl::map([](const QString &text, const QString &url) {
-					return tr::link(text, url);
-				}),
-				tr::rich),
-			st::inviteLinkSubscribeBoxTerms),
-		style::al_top);
+			object_ptr<Ui::FlatLabel>(
+				box,
+				tr::lng_channel_invite_subscription_terms(
+					lt_link,
+					rpl::combine(
+						tr::lng_paid_react_agree_link(),
+						tr::lng_group_invite_subscription_about_url()
+					) | rpl::map([](const QString &text, const QString &url) {
+						return Ui::Text::Link(text, url);
+					}),
+					Ui::Text::RichLangValue),
+				st::inviteLinkSubscribeBoxTerms)));
 
 	{
 		const auto balance = Settings::AddBalanceWidget(
 			content,
-			session,
 			session->credits().balanceValue(),
 			true);
 		session->credits().load(true);
@@ -260,7 +263,7 @@ void ConfirmSubscriptionBox(
 		rpl::combine(
 			balance->sizeValue(),
 			content->sizeValue()
-		) | rpl::on_next([=](const QSize &, const QSize &) {
+		) | rpl::start_with_next([=](const QSize &, const QSize &) {
 			balance->moveToRight(
 				st::creditsHistoryRightSkip * 2,
 				st::creditsHistoryRightSkip);
@@ -268,7 +271,7 @@ void ConfirmSubscriptionBox(
 		}, balance->lifetime());
 	}
 
-	const auto sendCredits = [=, weak = base::make_weak(box)] {
+	const auto sendCredits = [=, weak = Ui::MakeWeak(box)] {
 		const auto show = box->uiShow();
 		const auto buttonWidth = state->saveButton
 			? state->saveButton->width()
@@ -276,7 +279,7 @@ void ConfirmSubscriptionBox(
 		const auto finish = [=] {
 			state->api = std::nullopt;
 			state->loading.force_assign(false);
-			if (const auto strong = weak.get()) {
+			if (const auto strong = weak.data()) {
 				strong->closeBox();
 			}
 		};
@@ -290,7 +293,7 @@ void ConfirmSubscriptionBox(
 			}, [](const MTPDpayments_paymentVerificationNeeded &data) {
 			});
 			const auto refill = session->data().activeCreditsSubsRebuilder();
-			const auto strong = weak.get();
+			const auto strong = weak.data();
 			if (!strong) {
 				return;
 			}
@@ -408,7 +411,7 @@ void CheckChatInvite(
 				box->boxClosing(
 				) | rpl::filter([=] {
 					return !invitePeekChannel->amIn();
-				}) | rpl::on_next([=] {
+				}) | rpl::start_with_next([=] {
 					if (const auto strong = weak.get()) {
 						strong->clearSectionStack(Window::SectionShow(
 							Window::SectionShow::Way::ClearStack,
@@ -433,12 +436,6 @@ void CheckChatInvite(
 			}
 		});
 	}, [=](const MTP::Error &error) {
-		if (MTP::IsFloodError(error)) {
-			if (const auto strong = weak.get()) {
-				strong->show(Ui::MakeInformBox(tr::lng_flood_error()));
-			}
-			return;
-		}
 		if (error.code() != 400) {
 			return;
 		}
@@ -527,7 +524,7 @@ ConfirmInviteBox::ConfirmInviteBox(
 		_photo->wanted(Data::PhotoSize::Small, Data::FileOrigin());
 		if (!_photo->image(Data::PhotoSize::Small)) {
 			_session->downloaderTaskFinished(
-			) | rpl::on_next([=] {
+			) | rpl::start_with_next([=] {
 				update();
 			}, lifetime());
 		}

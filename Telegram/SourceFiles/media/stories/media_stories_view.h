@@ -9,10 +9,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 class ClickHandlerHost;
 
-namespace Calls {
-class GroupCall;
-} // namespace Calls
-
 namespace ChatHelpers {
 class Show;
 } // namespace ChatHelpers
@@ -134,9 +130,6 @@ public:
 		QPoint desiredPosition);
 
 	[[nodiscard]] std::shared_ptr<ChatHelpers::Show> uiShow() const;
-
-	void updateVideoStream(not_null<Calls::GroupCall*> videoStream);
-	[[nodiscard]] rpl::producer<bool> commentsShownValue() const;
 
 	[[nodiscard]] rpl::lifetime &lifetime();
 

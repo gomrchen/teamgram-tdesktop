@@ -16,7 +16,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "media/audio/media_audio.h"
 #include "media/player/media_player_instance.h"
 #include "history/history_item_components.h"
-#include "history/history_item.h"
+#include "history/history_item_helpers.h" // ClearMediaAsExpired.
 #include "history/history.h"
 #include "core/click_handler_types.h" // kDocumentFilenameTooltipProperty.
 #include "history/view/history_view_element.h"
@@ -25,7 +25,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/view/media/history_view_media_common.h"
 #include "ui/text/format_values.h"
 #include "ui/text/format_song_document_name.h"
-#include "ui/text/text_lottie_custom_emoji.h"
 #include "ui/text/text_utilities.h"
 #include "ui/chat/chat_style.h"
 #include "ui/painter.h"
@@ -272,10 +271,10 @@ void PaintWaveform(
 	};
 	add(FormatDownloadText(document->size, document->size));
 	const auto duration = document->duration() / 1000;
-	if (document->song()) {
+	if (const auto song = document->song()) {
 		add(FormatPlayedText(duration, duration));
 		add(FormatDurationAndSizeText(duration, document->size));
-	} else if (document->voice() ? document->voice() : document->round()) {
+	} else if (const auto voice = document->voice() ? document->voice() : document->round()) {
 		add(FormatPlayedText(duration, duration));
 		add(FormatDurationAndSizeText(duration, document->size));
 	} else if (document->isVideoFile()) {
@@ -312,7 +311,7 @@ Document::Document(
 		const auto fullId = _realParent->fullId();
 		if (_parent->delegate()->elementContext() == Context::TTLViewer) {
 			auto lifetime = std::make_shared<rpl::lifetime>();
-			TTLVoiceStops(fullId) | rpl::on_next([=]() mutable {
+			TTLVoiceStops(fullId) | rpl::start_with_next([=]() mutable {
 				if (lifetime) {
 					base::take(lifetime)->destroy();
 				}
@@ -325,13 +324,13 @@ Document::Document(
 				_openl = nullptr;
 
 				auto lifetime = std::make_shared<rpl::lifetime>();
-				TTLVoiceStops(fullId) | rpl::on_next([=]() mutable {
+				TTLVoiceStops(fullId) | rpl::start_with_next([=]() mutable {
 					if (lifetime) {
 						base::take(lifetime)->destroy();
 					}
 					if (const auto item = data->message(fullId)) {
 						// Destroys this.
-						item->clearMediaAsExpired();
+						ClearMediaAsExpired(item);
 					}
 				}, *lifetime);
 
@@ -421,7 +420,6 @@ QSize Document::countOptimalSize() {
 		const auto transcribes = &session->api().transcribes();
 		if (_parent->data()->media()->ttlSeconds()
 			|| _realParent->isScheduled()
-			|| _realParent->isAdminLogEntry()
 			|| (!session->premium()
 				&& !transcribes->freeFor(_realParent)
 				&& !transcribes->trialsSupport())
@@ -439,26 +437,17 @@ QSize Document::countOptimalSize() {
 			const auto &entry = transcribes->entry(_realParent);
 			const auto update = [=] { repaint(); };
 			voice->transcribe->setLoading(
-				entry.shown && (entry.requestId || entry.pending));
-			const auto pending = entry.pending;
-			auto descriptor = pending
-				? Lottie::IconDescriptor{
-					.name = u"transcribe_loading"_q,
-					.color = &st::attentionButtonFg, // Any contrast.
-					.sizeOverride = Size(st::historyTranscribeLoadingSize),
-					.colorizeUsingAlpha = true,
-				}
-				: Lottie::IconDescriptor();
+				entry.shown && (entry.requestId || entry.pending),
+				update);
 			auto text = (entry.requestId || !entry.shown)
 				? TextWithEntities()
 				: entry.toolong
-				? tr::italic(tr::lng_audio_transcribe_long(tr::now))
+				? Ui::Text::Italic(tr::lng_audio_transcribe_long(tr::now))
 				: entry.failed
-				? tr::italic(tr::lng_attach_failed(tr::now))
-				: TextWithEntities{ entry.result }.append(
-					pending
-						? Ui::Text::LottieEmoji(descriptor)
-						: TextWithEntities());
+				? Ui::Text::Italic(tr::lng_attach_failed(tr::now))
+				: TextWithEntities{
+					entry.result + (entry.pending ? " [...]" : ""),
+				};
 			voice->transcribe->setOpened(
 				!text.empty(),
 				creating ? Fn<void()>() : update);
@@ -471,11 +460,7 @@ QSize Document::countOptimalSize() {
 				voice->transcribeText = Ui::Text::String(minResizeWidth);
 				voice->transcribeText.setMarkedText(
 					st::messageTextStyle,
-					text,
-					kMarkupTextOptions,
-					pending
-						? Ui::Text::LottieEmojiContext(std::move(descriptor))
-						: Ui::Text::MarkedContext());
+					text);
 				hasTranscribe = true;
 				if (const auto skipBlockWidth = _parent->hasVisibleText()
 					? 0
@@ -637,7 +622,7 @@ void Document::draw(
 
 	const auto cornerDownload = downloadInCorner();
 
-	if (!_dataMedia->canBePlayed()) {
+	if (!_dataMedia->canBePlayed(_realParent)) {
 		_dataMedia->automaticLoad(_realParent->fullId(), _realParent);
 	}
 	bool loaded = dataLoaded(), displayLoading = _data->displayLoading();
@@ -773,8 +758,8 @@ void Document::draw(
 				return _data->isSongWithCover()
 					? sti->historyFileThumbPause
 					: stm->historyFilePause;
-			} else if (loaded || _dataMedia->canBePlayed()) {
-				return _dataMedia->canBePlayed()
+			} else if (loaded || _dataMedia->canBePlayed(_realParent)) {
+				return _dataMedia->canBePlayed(_realParent)
 					? (_data->isSongWithCover()
 						? sti->historyFileThumbPlay
 						: stm->historyFilePlay)
@@ -953,16 +938,13 @@ void Document::draw(
 	if (const auto captioned = Get<HistoryDocumentCaptioned>()) {
 		p.setPen(stm->historyTextFg);
 		_parent->prepareCustomEmojiPaint(p, context, captioned->caption);
-
 		auto highlightRequest = context.computeHighlightCache();
 		captioned->caption.draw(p, {
 			.position = { st::msgPadding.left(), captiontop },
 			.availableWidth = captionw,
 			.palette = &stm->textPalette,
 			.pre = stm->preCache.get(),
-			.blockquote = context.quoteCache(
-				parent()->contentColorCollectible(),
-				parent()->contentColorIndex()),
+			.blockquote = context.quoteCache(parent()->contentColorIndex()),
 			.colors = context.st->highlightColors(),
 			.spoiler = Ui::Text::DefaultSpoilerCache(),
 			.now = context.now,
@@ -1064,7 +1046,7 @@ void Document::ensureDataMediaCreated() const {
 bool Document::downloadInCorner() const {
 	return _data->isAudioFile()
 		&& _realParent->allowsForward()
-		&& _data->canBeStreamed()
+		&& _data->canBeStreamed(_realParent)
 		&& !_data->inappPlaybackFailed();
 }
 
@@ -1293,7 +1275,7 @@ TextState Document::textState(
 		&& (!_data->loading() || downloadInCorner())
 		&& !_data->uploading()
 		&& !_data->isNull()) {
-		if (loaded || _dataMedia->canBePlayed()) {
+		if (loaded || _dataMedia->canBePlayed(_realParent)) {
 			result.link = _openl;
 		} else {
 			result.link = _savel;

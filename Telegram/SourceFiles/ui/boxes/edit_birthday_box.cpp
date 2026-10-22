@@ -25,11 +25,7 @@ class GenericBox;
 void EditBirthdayBox(
 		not_null<Ui::GenericBox*> box,
 		Data::Birthday current,
-		Fn<void(Data::Birthday)> save,
-		EditBirthdayType type) {
-	if (type != EditBirthdayType::Suggest) {
-		box->setTitle(tr::lng_settings_birthday_title());
-	}
+		Fn<void(Data::Birthday)> save) {
 	box->setWidth(st::boxWideWidth);
 	const auto content = box->addRow(object_ptr<Ui::FixedHeightWidget>(
 		box,
@@ -41,12 +37,31 @@ void EditBirthdayBox(
 			int count,
 			int startIndex,
 			Fn<void(QPainter &p, QRectF rect, int index)> paint) {
+		auto paintCallback = [=](
+				QPainter &p,
+				int index,
+				float64 y,
+				float64 distanceFromCenter,
+				int outerWidth) {
+			const auto r = QRectF(0, y, outerWidth, itemHeight);
+			const auto progress = std::abs(distanceFromCenter);
+			const auto revProgress = 1. - progress;
+			p.save();
+			p.translate(r.center());
+			constexpr auto kMinYScale = 0.2;
+			const auto yScale = kMinYScale
+				+ (1. - kMinYScale) * anim::easeOutCubic(1., revProgress);
+			p.scale(1., yScale);
+			p.translate(-r.center());
+			p.setOpacity(revProgress);
+			p.setFont(font);
+			p.setPen(st::defaultFlatLabel.textFg);
+			paint(p, r, index);
+			p.restore();
+		};
 		return Ui::CreateChild<Ui::VerticalDrumPicker>(
 			content,
-			Ui::VerticalDrumPicker::DefaultPaintCallback(
-				font,
-				itemHeight,
-				paint),
+			std::move(paintCallback),
 			count,
 			itemHeight,
 			startIndex);
@@ -85,7 +100,7 @@ void EditBirthdayBox(
 		content->sizeValue(),
 		state->months.value(),
 		state->days.value()
-	) | rpl::on_next([=](
+	) | rpl::start_with_next([=](
 			QSize s,
 			Ui::VerticalDrumPicker *months,
 			Ui::VerticalDrumPicker *days) {
@@ -101,7 +116,7 @@ void EditBirthdayBox(
 
 	Ui::SendPendingMoveResizeEvents(years);
 
-	years->value() | rpl::on_next([=](int yearsIndex) {
+	years->value() | rpl::start_with_next([=](int yearsIndex) {
 		const auto year = (yearsIndex == yearsCount - 1)
 			? 0
 			: minYear + yearsIndex;
@@ -137,7 +152,7 @@ void EditBirthdayBox(
 		return picker ? picker->value() : rpl::single(current.month()
 			? (current.month() - 1)
 			: (now.month() - 1));
-	}) | rpl::flatten_latest() | rpl::on_next([=](int monthIndex) {
+	}) | rpl::flatten_latest() | rpl::start_with_next([=](int monthIndex) {
 		const auto month = monthIndex + 1;
 		const auto yearsIndex = years->index();
 		const auto year = (yearsIndex == yearsCount - 1)
@@ -146,7 +161,7 @@ void EditBirthdayBox(
 		const auto daysCount = (year == maxYear && month == max.month())
 			? max.day()
 			: (month == 2)
-			? ((!year || (!(year % 4) && ((year % 100) || !(year % 400))))
+			? ((!year || ((year % 4) && (!(year % 100) || (year % 400))))
 				? 29
 				: 28)
 			: ((month == 4) || (month == 6) || (month == 9) || (month == 11))
@@ -173,7 +188,7 @@ void EditBirthdayBox(
 	}, years->lifetime());
 
 	content->paintRequest(
-	) | rpl::on_next([=](const QRect &r) {
+	) | rpl::start_with_next([=](const QRect &r) {
 		auto p = QPainter(content);
 
 		p.fillRect(r, Qt::transparent);
@@ -194,10 +209,7 @@ void EditBirthdayBox(
 		return base::EventFilterResult::Continue;
 	});
 
-	auto confirmText = (type == EditBirthdayType::Suggest)
-		? tr::lng_suggest_birthday_box_confirm()
-		: tr::lng_settings_save();
-	box->addButton(std::move(confirmText), [=] {
+	box->addButton(tr::lng_settings_save(), [=] {
 		const auto result = Data::Birthday(
 			state->days.current()->index() + 1,
 			state->months.current()->index() + 1,
@@ -210,7 +222,7 @@ void EditBirthdayBox(
 	box->addButton(tr::lng_cancel(), [=] {
 		box->closeBox();
 	});
-	if (current && type == EditBirthdayType::Edit) {
+	if (current) {
 		box->addLeftButton(tr::lng_settings_birthday_reset(), [=] {
 			box->closeBox();
 			save(Data::Birthday());

@@ -7,7 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
-#include "core/credits_amount.h"
+#include "core/stars_amount.h"
 #include "data/data_statistics_chart.h"
 
 #include <QtCore/QDateTime>
@@ -22,9 +22,9 @@ struct CreditsEarnStatistics final {
 			&& overallRevenue;
 	}
 	Data::StatisticalGraph revenueGraph;
-	CreditsAmount currentBalance;
-	CreditsAmount availableBalance;
-	CreditsAmount overallRevenue;
+	StarsAmount currentBalance;
+	StarsAmount availableBalance;
+	StarsAmount overallRevenue;
 	float64 usdRate = 0.;
 	bool isWithdrawalEnabled = false;
 	QDateTime nextWithdrawalAt;

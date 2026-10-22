@@ -14,9 +14,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "platform/platform_specific.h"
 #include "core/application.h"
 #include "core/sandbox.h"
+#include "core/core_settings.h"
 #include "data/data_forum_topic.h"
-#include "data/data_saved_sublist.h"
-#include "data/data_peer.h"
 #include "history/history.h"
 #include "history/history_item.h"
 #include "main/main_session.h"
@@ -60,10 +59,10 @@ std::vector<std::string> CurrentCapabilities;
 	return ranges::contains(CurrentCapabilities, value);
 }
 
-std::optional<base::Platform::DBus::ServiceWatcher> CreateServiceWatcher() {
+std::unique_ptr<base::Platform::DBus::ServiceWatcher> CreateServiceWatcher() {
 	auto connection = Gio::bus_get_sync(Gio::BusType::SESSION_, nullptr);
 	if (!connection) {
-		return {};
+		return nullptr;
 	}
 
 	const auto activatable = [&] {
@@ -78,7 +77,7 @@ std::optional<base::Platform::DBus::ServiceWatcher> CreateServiceWatcher() {
 		return ranges::contains(*names, kService);
 	}();
 
-	return std::make_optional<base::Platform::DBus::ServiceWatcher>(
+	return std::make_unique<base::Platform::DBus::ServiceWatcher>(
 		connection.gobj_(),
 		kService,
 		[=](
@@ -157,7 +156,6 @@ public:
 	void clearAll();
 	void clearFromItem(not_null<HistoryItem*> item);
 	void clearFromTopic(not_null<Data::ForumTopic*> topic);
-	void clearFromSublist(not_null<Data::SavedSublist*> sublist);
 	void clearFromHistory(not_null<History*> history);
 	void clearFromSession(not_null<Main::Session*> session);
 	void clearNotification(NotificationId id);
@@ -232,21 +230,15 @@ bool ByDefault() {
 	}, HasCapability);
 }
 
-bool VolumeSupported() {
-	return UseGNotification() || !HasCapability("sound");
-}
-
 void Create(Window::Notifications::System *system) {
 	static const auto ServiceWatcher = CreateServiceWatcher();
 
 	const auto managerSetter = [=](
 			XdgNotifications::NotificationsProxy proxy) {
-		Core::Sandbox::Instance().customEnterFromEventLoop([&] {
-			system->setManager([=] {
-				auto manager = std::make_unique<Manager>(system);
-				manager->_private->init(proxy);
-				return manager;
-			});
+		system->setManager([=] {
+			auto manager = std::make_unique<Manager>(system);
+			manager->_private->init(proxy);
+			return manager;
 		});
 	};
 
@@ -263,26 +255,27 @@ void Create(Window::Notifications::System *system) {
 		kService,
 		kObjectPath,
 		[=](GObject::Object, Gio::AsyncResult res) {
-			auto result =
-				XdgNotifications::NotificationsProxy::new_for_bus_finish(res);
+			auto proxy =
+				XdgNotifications::NotificationsProxy::new_for_bus_finish(
+					res,
+					nullptr);
 
-			if (result) {
-				ServiceRegistered = bool(result->get_name_owner());
-			} else {
-				Gio::DBusErrorNS_::strip_remote_error(result.error());
-				LOG(("Native Notification Error: %1").arg(
-					result.error().message_().c_str()));
+			if (!proxy) {
 				ServiceRegistered = false;
-			}
-
-			if (!ServiceRegistered) {
 				CurrentServerInformation = {};
 				CurrentCapabilities = {};
-				managerSetter({});
+				managerSetter(nullptr);
 				return;
 			}
 
-			auto proxy = *result;
+			ServiceRegistered = bool(proxy.get_name_owner());
+			if (!ServiceRegistered) {
+				CurrentServerInformation = {};
+				CurrentCapabilities = {};
+				managerSetter(proxy);
+				return;
+			}
+
 			auto interface = XdgNotifications::Notifications(proxy);
 
 			interface.call_get_server_information([=](
@@ -373,17 +366,16 @@ Manager::Private::Private(not_null<Manager*> manager)
 				.contextId = ContextId{
 					.sessionId = dict.lookup_value("session").get_uint64(),
 					.peerId = PeerId(dict.lookup_value("peer").get_uint64()),
-					.topicRootId = MsgId(
-						dict.lookup_value("topic").get_int64()),
-					.monoforumPeerId = PeerId(dict.lookup_value(
-						"monoforumpeer").get_uint64()),
+					.topicRootId = dict.lookup_value("topic").get_int64(),
 				},
 				.msgId = dict.lookup_value("msgid").get_int64(),
 			};
 		};
 
-		auto activate = gi::object_cast<Gio::SimpleAction>(
-			actionMap.lookup_action("notification-activate"));
+		auto activate = gi::wrap(
+			G_SIMPLE_ACTION(
+				actionMap.lookup_action("notification-activate").gobj_()),
+			gi::transfer_none);
 
 		const auto activateSig = activate.signal_activate().connect([=](
 				Gio::SimpleAction,
@@ -398,8 +390,10 @@ Manager::Private::Private(not_null<Manager*> manager)
 			activate.disconnect(activateSig);
 		});
 
-		auto markAsRead = gi::object_cast<Gio::SimpleAction>(
-			actionMap.lookup_action("notification-mark-as-read"));
+		auto markAsRead = gi::wrap(
+			G_SIMPLE_ACTION(
+				actionMap.lookup_action("notification-mark-as-read").gobj_()),
+			gi::transfer_none);
 
 		const auto markAsReadSig = markAsRead.signal_activate().connect([=](
 				Gio::SimpleAction,
@@ -537,30 +531,23 @@ void Manager::Private::showNotification(
 		.sessionId = peer->session().uniqueId(),
 		.peerId = peer->id,
 		.topicRootId = info.topicRootId,
-		.monoforumPeerId = info.monoforumPeerId,
 	};
 	const auto notificationId = NotificationId{
 		.contextId = key,
 		.msgId = info.itemId,
 	};
 	auto notification = _application
-		? Gio::Notification::new_(info.title.toStdString())
+		? Gio::Notification::new_(
+			info.subtitle.isEmpty()
+				? info.title.toStdString()
+				: info.subtitle.toStdString()
+					+ " (" + info.title.toStdString() + ')')
 		: Gio::Notification();
 
 	std::vector<gi::cstring> actions;
 	auto hints = GLib::VariantDict::new_();
 	if (notification) {
-		notification.set_body(info.subtitle.isEmpty()
-			? info.message.toStdString()
-			: tr::lng_dialogs_text_with_from(
-				tr::now,
-				lt_from_part,
-				tr::lng_dialogs_text_from_wrapped(
-					tr::now,
-					lt_from,
-					info.subtitle),
-				lt_message,
-				info.message).toStdString());
+		notification.set_body(info.message.toStdString());
 
 		notification.set_icon(
 			Gio::ThemedIcon::new_(ApplicationIconName().toStdString()));
@@ -599,10 +586,6 @@ void Manager::Private::showNotification(
 				GLib::Variant::new_variant(
 					GLib::Variant::new_int64(info.topicRootId.bare))),
 			GLib::Variant::new_dict_entry(
-				GLib::Variant::new_string("monoforumpeer"),
-				GLib::Variant::new_variant(
-					GLib::Variant::new_uint64(info.monoforumPeerId.value))),
-			GLib::Variant::new_dict_entry(
 				GLib::Variant::new_string("msgid"),
 				GLib::Variant::new_variant(
 					GLib::Variant::new_int64(info.itemId.bare))),
@@ -636,9 +619,9 @@ void Manager::Private::showNotification(
 				actions.push_back(
 					tr::lng_notification_reply(tr::now).toStdString());
 			}
-		}
 
-		actions.push_back({});
+			actions.push_back({});
+		}
 
 		if (HasCapability("action-icons")) {
 			hints.insert_value(
@@ -743,6 +726,8 @@ void Manager::Private::showNotification(
 				const auto hasImage = !imageKey.empty()
 					&& hints.lookup_value(imageKey);
 
+				const auto hasBodyMarkup = HasCapability("body-markup");
+
 				const auto callbackWrap = gi::unwrap(
 					Gio::AsyncReadyCallback(
 						crl::guard(this, [=](
@@ -781,27 +766,22 @@ void Manager::Private::showNotification(
 					(!hasImage
 						? ApplicationIconName().toStdString()
 						: std::string()).c_str(),
-					info.title.toStdString().c_str(),
-					(HasCapability("body-markup")
+					(hasBodyMarkup || info.subtitle.isEmpty()
+						? info.title.toStdString()
+						: info.subtitle.toStdString()
+							+ " (" + info.title.toStdString() + ')').c_str(),
+					(hasBodyMarkup
 						? info.subtitle.isEmpty()
 							? info.message.toHtmlEscaped().toStdString()
 							: u"<b>%1</b>\n%2"_q.arg(
 								info.subtitle.toHtmlEscaped(),
 								info.message.toHtmlEscaped()).toStdString()
-						: info.subtitle.isEmpty()
-							? info.message.toStdString()
-							: tr::lng_dialogs_text_with_from(
-								tr::now,
-								lt_from_part,
-								tr::lng_dialogs_text_from_wrapped(
-									tr::now,
-									lt_from,
-									info.subtitle),
-								lt_message,
-								info.message).toStdString()).c_str(),
-					(actions
-						| ranges::views::transform(&gi::cstring::c_str)
-						| ranges::to_vector).data(),
+						: info.message.toStdString()).c_str(),
+					!actions.empty()
+						? (actions
+							| ranges::views::transform(&gi::cstring::c_str)
+							| ranges::to_vector).data()
+						: nullptr,
 					hints.end().gobj_(),
 					-1,
 					nullptr,
@@ -820,7 +800,6 @@ void Manager::Private::clearFromItem(not_null<HistoryItem*> item) {
 		.sessionId = item->history()->session().uniqueId(),
 		.peerId = item->history()->peer->id,
 		.topicRootId = item->topicRootId(),
-		.monoforumPeerId = item->sublistPeerId(),
 	});
 	if (i != _notifications.cend()
 			&& i->second.remove(item->id)
@@ -834,15 +813,6 @@ void Manager::Private::clearFromTopic(not_null<Data::ForumTopic*> topic) {
 		.sessionId = topic->session().uniqueId(),
 		.peerId = topic->history()->peer->id,
 		.topicRootId = topic->rootId(),
-	});
-}
-
-void Manager::Private::clearFromSublist(
-		not_null<Data::SavedSublist*> sublist) {
-	_notifications.remove(ContextId{
-		.sessionId = sublist->session().uniqueId(),
-		.peerId = sublist->owningHistory()->peer->id,
-		.monoforumPeerId = sublist->sublistPeer()->id,
 	});
 }
 
@@ -910,10 +880,6 @@ void Manager::doClearFromTopic(not_null<Data::ForumTopic*> topic) {
 	_private->clearFromTopic(topic);
 }
 
-void Manager::doClearFromSublist(not_null<Data::SavedSublist*> sublist) {
-	_private->clearFromSublist(sublist);
-}
-
 void Manager::doClearFromHistory(not_null<History*> history) {
 	_private->clearFromHistory(history);
 }
@@ -927,7 +893,11 @@ bool Manager::doSkipToast() const {
 }
 
 void Manager::doMaybePlaySound(Fn<void()> playSound) {
-	_private->invokeIfNotInhibited(std::move(playSound));
+	if (UseGNotification()
+		|| !HasCapability("sound")
+		|| !Core::App().settings().desktopNotify()) {
+		_private->invokeIfNotInhibited(std::move(playSound));
+	}
 }
 
 void Manager::doMaybeFlashBounce(Fn<void()> flashBounce) {

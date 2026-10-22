@@ -17,13 +17,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_text_entities.h"
 #include "history/history.h"
 #include "boxes/abstract_box.h"
-#include "ui/boxes/confirm_box.h"
+#include "ui/toast/toast.h"
+#include "ui/widgets/fields/input_field.h"
 #include "ui/chat/attach/attach_prepare.h"
 #include "ui/text/format_values.h"
 #include "ui/text/text_entity.h"
 #include "ui/text/text_options.h"
-#include "ui/toast/toast.h"
-#include "ui/widgets/fields/input_field.h"
 #include "chat_helpers/message_field.h"
 #include "chat_helpers/emoji_suggestions_widget.h"
 #include "base/unixtime.h"
@@ -55,7 +54,6 @@ constexpr auto kOccupyFor = TimeId(60);
 constexpr auto kReoccupyEach = 30 * crl::time(1000);
 constexpr auto kMaxSupportInfoLength = MaxMessageSize * 4;
 constexpr auto kTopicRootId = MsgId(0);
-constexpr auto kMonoforumPeerId = PeerId(0);
 
 class EditInfoBox : public Ui::BoxContent {
 public:
@@ -94,8 +92,7 @@ EditInfoBox::EditInfoBox(
 		Core::App().settings().sendSubmitWay());
 	_field->setInstantReplaces(Ui::InstantReplaces::Default());
 	_field->setInstantReplacesEnabled(
-		Core::App().settings().replaceEmojiValue(),
-		Core::App().settings().systemTextReplaceValue());
+		Core::App().settings().replaceEmojiValue());
 	_field->setMarkdownReplacesEnabled(true);
 	_field->setEditLinkCallback(
 		DefaultEditLinkCallback(controller->uiShow(), _field));
@@ -117,9 +114,9 @@ void EditInfoBox::prepare() {
 	addButton(tr::lng_settings_save(), save);
 	addButton(tr::lng_cancel(), [=] { closeBox(); });
 
-	_field->submits() | rpl::on_next(save, _field->lifetime());
+	_field->submits() | rpl::start_with_next(save, _field->lifetime());
 	_field->cancelled(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		closeBox();
 	}, _field->lifetime());
 	Ui::Emoji::SuggestionsController::Init(
@@ -132,14 +129,14 @@ void EditInfoBox::prepare() {
 	_field->setTextCursor(cursor);
 
 	widthValue(
-	) | rpl::on_next([=](int width) {
+	) | rpl::start_with_next([=](int width) {
 		_field->resizeToWidth(
 			width - st::boxPadding.left() - st::boxPadding.right());
 		_field->moveToLeft(st::boxPadding.left(), st::boxPadding.bottom());
 	}, _field->lifetime());
 
 	_field->heightValue(
-	) | rpl::on_next([=](int height) {
+	) | rpl::start_with_next([=](int height) {
 		setDimensions(
 			st::boxWideWidth,
 			st::boxPadding.bottom() + height + st::boxPadding.bottom());
@@ -168,7 +165,6 @@ Data::Draft OccupiedDraft(const QString &normalizedName) {
 			+ ";n:"
 			+ normalizedName },
 		FullReplyTo(),
-		SuggestOptions(),
 		MessageCursor(),
 		Data::WebPageDraft()
 	};
@@ -187,7 +183,7 @@ uint32 ParseOccupationTag(History *history) {
 	if (!TrackHistoryOccupation(history)) {
 		return 0;
 	}
-	const auto draft = history->cloudDraft(kTopicRootId, kMonoforumPeerId);
+	const auto draft = history->cloudDraft(kTopicRootId);
 	if (!draft) {
 		return 0;
 	}
@@ -213,7 +209,7 @@ QString ParseOccupationName(History *history) {
 	if (!TrackHistoryOccupation(history)) {
 		return QString();
 	}
-	const auto draft = history->cloudDraft(kTopicRootId, kMonoforumPeerId);
+	const auto draft = history->cloudDraft(kTopicRootId);
 	if (!draft) {
 		return QString();
 	}
@@ -239,7 +235,7 @@ TimeId OccupiedBySomeoneTill(History *history) {
 	if (!TrackHistoryOccupation(history)) {
 		return 0;
 	}
-	const auto draft = history->cloudDraft(kTopicRootId, kMonoforumPeerId);
+	const auto draft = history->cloudDraft(kTopicRootId);
 	if (!draft) {
 		return 0;
 	}
@@ -294,32 +290,8 @@ Helper::Helper(not_null<Main::Session*> session)
 
 std::unique_ptr<Helper> Helper::Create(not_null<Main::Session*> session) {
 	//return std::make_unique<Helper>(session); AssertIsDebug();
-	return ShouldUse(session) ? std::make_unique<Helper>(session) : nullptr;
-}
-
-void Helper::CheckIfLost(not_null<Window::SessionController*> controller) {
-	static auto Checked = false;
-	if (Checked) {
-		return;
-	}
-	Checked = true;
-
-	const auto session = &controller->session();
-	if (!ShouldUse(session) || session->supportMode()) {
-		return;
-	}
-	session->local().writeSelf();
-	controller->show(Ui::MakeConfirmBox({
-		.text = u"This account should have support mode, "
-			"but it seems it was lost. Restart?"_q,
-		.confirmed = [=] { Core::Restart(); },
-		.confirmText = u"Restart"_q,
-		.title = u"Support Mode Lost"_q,
-	}));
-}
-
-bool Helper::ShouldUse(not_null<Main::Session*> session) {
-	return session->user()->phone().startsWith(u"424"_q);
+	const auto valid = session->user()->phone().startsWith(u"424"_q);
+	return valid ? std::make_unique<Helper>(session) : nullptr;
 }
 
 void Helper::registerWindow(not_null<Window::SessionController*> controller) {
@@ -328,7 +300,7 @@ void Helper::registerWindow(not_null<Window::SessionController*> controller) {
 		const auto history = key.history();
 		return TrackHistoryOccupation(history) ? history : nullptr;
 	}) | rpl::distinct_until_changed(
-	) | rpl::on_next([=](History *history) {
+	) | rpl::start_with_next([=](History *history) {
 		updateOccupiedHistory(controller, history);
 	}, controller->lifetime());
 }
@@ -381,7 +353,7 @@ void Helper::updateOccupiedHistory(
 		not_null<Window::SessionController*> controller,
 		History *history) {
 	if (isOccupiedByMe(_occupiedHistory)) {
-		_occupiedHistory->clearCloudDraft(kTopicRootId, kMonoforumPeerId);
+		_occupiedHistory->clearCloudDraft(kTopicRootId);
 		_session->api().saveDraftToCloudDelayed(_occupiedHistory);
 	}
 	_occupiedHistory = history;
@@ -405,10 +377,7 @@ void Helper::occupyInDraft() {
 		&& !isOccupiedBySomeone(_occupiedHistory)
 		&& !_supportName.isEmpty()) {
 		const auto draft = OccupiedDraft(_supportNameNormalized);
-		_occupiedHistory->createCloudDraft(
-			kTopicRootId,
-			kMonoforumPeerId,
-			&draft);
+		_occupiedHistory->createCloudDraft(kTopicRootId, &draft);
 		_session->api().saveDraftToCloudDelayed(_occupiedHistory);
 		_reoccupyTimer.callEach(kReoccupyEach);
 	}
@@ -417,10 +386,7 @@ void Helper::occupyInDraft() {
 void Helper::reoccupy() {
 	if (isOccupiedByMe(_occupiedHistory)) {
 		const auto draft = OccupiedDraft(_supportNameNormalized);
-		_occupiedHistory->createCloudDraft(
-			kTopicRootId,
-			kMonoforumPeerId,
-			&draft);
+		_occupiedHistory->createCloudDraft(kTopicRootId, &draft);
 		_session->api().saveDraftToCloudDelayed(_occupiedHistory);
 	}
 }
@@ -441,7 +407,7 @@ bool Helper::isOccupiedBySomeone(History *history) const {
 
 void Helper::refreshInfo(not_null<UserData*> user) {
 	_api.request(MTPhelp_GetUserInfo(
-		user->inputUser()
+		user->inputUser
 	)).done([=](const MTPhelp_UserInfo &result) {
 		applyInfo(user, result);
 		if (const auto controller = _userInfoEditPending.take(user)) {
@@ -570,7 +536,7 @@ void Helper::saveInfo(
 		text.entities,
 		Api::ConvertOption::SkipLocal);
 	_userInfoSaving[user].requestId = _api.request(MTPhelp_EditUserInfo(
-		user->inputUser(),
+		user->inputUser,
 		MTP_string(text.text),
 		entities
 	)).done([=](const MTPhelp_UserInfo &result) {
@@ -720,18 +686,15 @@ QString InterpretSendPath(
 	const auto sendTo = [=](not_null<Data::Thread*> thread) {
 		window->showThread(thread);
 		const auto premium = thread->session().user()->isPremium();
-		auto list = Storage::PrepareMediaList(
-			QStringList(filePath),
-			st::sendMediaPreviewSize,
-			premium);
-		if (!list.files.empty()) {
-			list.files.back().caption.text = caption;
-			thread->session().api().sendFiles(
-				std::move(list),
-				SendMediaType::File,
-				nullptr,
-				Api::SendAction(thread));
-		}
+		thread->session().api().sendFiles(
+			Storage::PrepareMediaList(
+				QStringList(filePath),
+				st::sendMediaPreviewSize,
+				premium),
+			SendMediaType::File,
+			{ caption },
+			nullptr,
+			Api::SendAction(thread));
 	};
 	if (!history) {
 		return "App Error: Could not find channel with id: "

@@ -85,20 +85,13 @@ void PaintOutlineSegments(
 	}
 }
 
-QLinearGradient UnreadStoryOutlineGradient(
-		QRectF rect,
-		const QColor &c1,
-		const QColor &c2) {
-	auto result = QLinearGradient(rect.topRight(), rect.bottomLeft());
-	result.setStops({ { 0., c1 }, { 1., c2 } });
-	return result;
-}
-
 QLinearGradient UnreadStoryOutlineGradient(QRectF rect) {
-	return UnreadStoryOutlineGradient(
-		std::move(rect),
-		st::groupCallLive1->c,
-		st::groupCallMuted1->c);
+	auto result = QLinearGradient(rect.topRight(), rect.bottomLeft());
+	result.setStops({
+		{ 0., st::groupCallLive1->c },
+		{ 1., st::groupCallMuted1->c },
+	});
+	return result;
 }
 
 } // namespace Ui

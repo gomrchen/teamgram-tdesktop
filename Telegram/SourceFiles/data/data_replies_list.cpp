@@ -71,7 +71,7 @@ RepliesList::RepliesList(
 , _readRequestTimer([=] { sendReadTillRequest(); }) {
 	if (_owningTopic) {
 		_owningTopic->destroyed(
-		) | rpl::on_next([=] {
+		) | rpl::start_with_next([=] {
 			_owningTopic = nullptr;
 			subscribeToUpdates();
 		}, _lifetime);
@@ -96,7 +96,7 @@ void RepliesList::subscribeToUpdates() {
 	) | rpl::filter([=](const RepliesReadTillUpdate &update) {
 		return (update.id.msg == _rootId)
 			&& (update.id.peer == _history->peer->id);
-	}) | rpl::on_next([=](const RepliesReadTillUpdate &update) {
+	}) | rpl::start_with_next([=](const RepliesReadTillUpdate &update) {
 		apply(update);
 	}, _lifetime);
 
@@ -105,18 +105,18 @@ void RepliesList::subscribeToUpdates() {
 		| MessageUpdate::Flag::NewMaybeAdded
 		| MessageUpdate::Flag::ReplyToTopAdded
 		| MessageUpdate::Flag::Destroyed
-	) | rpl::on_next([=](const MessageUpdate &update) {
+	) | rpl::start_with_next([=](const MessageUpdate &update) {
 		apply(update);
 	}, _lifetime);
 
 	_history->session().changes().topicUpdates(
 		TopicUpdate::Flag::Creator
-	) | rpl::on_next([=](const TopicUpdate &update) {
+	) | rpl::start_with_next([=](const TopicUpdate &update) {
 		apply(update);
 	}, _lifetime);
 
 	_history->owner().channelDifferenceTooLong(
-	) | rpl::on_next([=](not_null<ChannelData*> channel) {
+	) | rpl::start_with_next([=](not_null<ChannelData*> channel) {
 		if (channel == _history->peer) {
 			applyDifferenceTooLong();
 		}
@@ -194,19 +194,19 @@ rpl::producer<MessagesSlice> RepliesList::source(
 		_history->session().changes().historyUpdates(
 			_history,
 			HistoryUpdate::Flag::ClientSideMessages
-		) | rpl::on_next(pushDelayed, lifetime);
+		) | rpl::start_with_next(pushDelayed, lifetime);
 
 		_history->session().changes().messageUpdates(
 			MessageUpdate::Flag::Destroyed
 		) | rpl::filter([=](const MessageUpdate &update) {
 			return applyItemDestroyed(viewer, update.item);
-		}) | rpl::on_next(pushDelayed, lifetime);
+		}) | rpl::start_with_next(pushDelayed, lifetime);
 
 		_listChanges.events(
-		) | rpl::on_next(pushDelayed, lifetime);
+		) | rpl::start_with_next(pushDelayed, lifetime);
 
 		_instantChanges.events(
-		) | rpl::on_next(pushInstant, lifetime);
+		) | rpl::start_with_next(pushInstant, lifetime);
 
 		pushInstant();
 		return lifetime;
@@ -366,7 +366,7 @@ bool RepliesList::buildFromData(not_null<Viewer*> viewer) {
 	const auto around = [&] {
 		if (viewer->around != ShowAtUnreadMsgId) {
 			return viewer->around;
-		} else if (lookupRoot()) {
+		} else if (const auto item = lookupRoot()) {
 			return computeInboxReadTillFull();
 		} else if (_owningTopic) {
 			// Somehow we don't want always to jump to computed inboxReadTill
@@ -456,16 +456,16 @@ bool RepliesList::applyItemDestroyed(
 bool RepliesList::applyUpdate(const MessageUpdate &update) {
 	using Flag = MessageUpdate::Flag;
 
-	if (update.item->history() != _history || !update.item->isRegular()) {
+	if (update.item->history() != _history
+		|| !update.item->isRegular()
+		|| !update.item->inThread(_rootId)) {
 		return false;
 	}
-
 	const auto id = update.item->id;
-	const auto inThread = update.item->inThread(_rootId);
 	const auto added = (update.flags & Flag::ReplyToTopAdded);
 	const auto i = ranges::lower_bound(_list, id, std::greater<>());
 	if (update.flags & Flag::Destroyed) {
-		if (!added && inThread) {
+		if (!added) {
 			changeUnreadCountByPost(id, -1);
 		}
 		if (i == end(_list) || *i != id) {
@@ -480,8 +480,6 @@ bool RepliesList::applyUpdate(const MessageUpdate &update) {
 			}
 		}
 		return true;
-	} else if (!inThread) {
-		return false;
 	}
 	if (added) {
 		changeUnreadCountByPost(id, 1);
@@ -536,7 +534,7 @@ void RepliesList::loadAround(MsgId id) {
 
 	const auto send = [=](Fn<void()> finish) {
 		return _history->session().api().request(MTPmessages_GetReplies(
-			_history->peer->input(),
+			_history->peer->input,
 			MTP_int(_rootId),
 			MTP_int(id), // offset_id
 			MTP_int(0), // offset_date
@@ -593,7 +591,7 @@ void RepliesList::loadBefore() {
 	const auto last = _list.back();
 	const auto send = [=](Fn<void()> finish) {
 		return _history->session().api().request(MTPmessages_GetReplies(
-			_history->peer->input(),
+			_history->peer->input,
 			MTP_int(_rootId),
 			MTP_int(last), // offset_id
 			MTP_int(0), // offset_date
@@ -637,7 +635,7 @@ void RepliesList::loadAfter() {
 	const auto first = _list.front();
 	const auto send = [=](Fn<void()> finish) {
 		return _history->session().api().request(MTPmessages_GetReplies(
-			_history->peer->input(),
+			_history->peer->input,
 			MTP_int(_rootId),
 			MTP_int(first + 1), // offset_id
 			MTP_int(0), // offset_date
@@ -693,19 +691,17 @@ bool RepliesList::processMessagesIsEmpty(const MTPmessages_Messages &result) {
 			"(HistoryWidget::messagesReceived)"));
 		return 0;
 	}, [&](const MTPDmessages_messages &data) {
-		_history->peer->processTopics(data.vtopics());
 		return int(data.vmessages().v.size());
 	}, [&](const MTPDmessages_messagesSlice &data) {
-		_history->peer->processTopics(data.vtopics());
 		return data.vcount().v;
 	}, [&](const MTPDmessages_channelMessages &data) {
 		if (const auto channel = _history->peer->asChannel()) {
 			channel->ptsReceived(data.vpts().v);
+			channel->processTopics(data.vtopics());
 		} else {
 			LOG(("API Error: received messages.channelMessages when "
 				"no channel was passed! (HistoryWidget::messagesReceived)"));
 		}
-		_history->peer->processTopics(data.vtopics());
 		return data.vcount().v;
 	});
 
@@ -942,7 +938,7 @@ void RepliesList::requestUnreadCount() {
 	};
 	_reloadUnreadCountRequestId = session->api().request(
 		MTPmessages_GetDiscussionMessage(
-			_history->peer->input(),
+			_history->peer->input,
 			MTP_int(_rootId))
 	).done([=](const MTPmessages_DiscussionMessage &result) {
 		if (weak) {
@@ -1006,7 +1002,7 @@ void RepliesList::sendReadTillRequest() {
 	api->request(base::take(_readRequestId)).cancel();
 
 	_readRequestId = api->request(MTPmessages_ReadDiscussion(
-		_history->peer->input(),
+		_history->peer->input,
 		MTP_int(_rootId),
 		MTP_int(computeInboxReadTillFull())
 	)).done(crl::guard(this, [=] {

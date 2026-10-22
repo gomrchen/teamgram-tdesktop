@@ -7,7 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "statistics/widgets/point_details_widget.h"
 
-#include "base/debug_log.h"
+#include "data/data_channel_earn.h" // Data::kEarnMultiplier.
 #include "info/channel_statistics/earn/earn_format.h"
 #include "lang/lang_keys.h"
 #include "statistics/statistics_common.h"
@@ -139,7 +139,7 @@ PointDetailsWidget::PointDetailsWidget(
 	if (zoomEnabled) {
 		rpl::single(rpl::empty_value()) | rpl::then(
 			style::PaletteChanged()
-		) | rpl::on_next([=] {
+		) | rpl::start_with_next([=] {
 			const auto w = st::statisticsDetailsArrowShift;
 			const auto stroke = style::ConvertScaleExact(
 				st::statisticsDetailsArrowStroke);
@@ -179,7 +179,7 @@ PointDetailsWidget::PointDetailsWidget(
 	const auto maxValueTextWidth = [&] {
 		if (hasUsdLine) {
 			auto maxValueWidth = 0;
-			const auto multiplier = float64(kOneStarInNano);
+			const auto multiplier = float64(Data::kEarnMultiplier);
 			for (const auto &value : _chartData.lines.front().y) {
 				const auto valueText = Ui::Text::String(
 					_textStyle,
@@ -187,7 +187,7 @@ PointDetailsWidget::PointDetailsWidget(
 				const auto usdText = Ui::Text::String(
 					_textStyle,
 					Info::ChannelEarn::ToUsd(
-						value / multiplier,
+						value,
 						_chartData.currencyRate,
 						0));
 				const auto width = std::max(
@@ -261,7 +261,7 @@ PointDetailsWidget::PointDetailsWidget(
 			+ _maxPercentageWidth;
 	}();
 	sizeValue(
-	) | rpl::on_next([=](const QSize &s) {
+	) | rpl::start_with_next([=](const QSize &s) {
 		const auto fullRect = s.isNull()
 			? Rect(Size(calculatedWidth))
 			: Rect(s);
@@ -304,12 +304,6 @@ void PointDetailsWidget::setXIndex(int xIndex) {
 	if (xIndex < 0) {
 		return;
 	}
-	if (xIndex >= _chartData.x.size()) {
-		LOG((u"xIndex out of bounds: %1, max: %2"_q)
-			.arg(xIndex)
-			.arg(_chartData.x.size() - 1));
-		xIndex = _chartData.x.size() - 1;
-	}
 	{
 		constexpr auto kOneDay = 3600 * 24 * 1000;
 		const auto timestamp = _chartData.x[xIndex];
@@ -331,11 +325,11 @@ void PointDetailsWidget::setXIndex(int xIndex) {
 			nullptr,
 			{ float64(xIndex), float64(xIndex) }).parts
 		: std::vector<PiePartData::Part>();
+	const auto multiplier = float64(Data::kEarnMultiplier);
 	const auto isCredits
-		= (_chartData.currency == Data::StatisticalCurrency::Credits);
+		= _chartData.currency == Data::StatisticalCurrency::Credits;
 	for (auto i = 0; i < _chartData.lines.size(); i++) {
 		const auto &dataLine = _chartData.lines[i];
-		Assert(xIndex < dataLine.y.size());
 		auto textLine = Line();
 		textLine.id = dataLine.id;
 		if (_maxPercentageWidth) {
@@ -357,23 +351,19 @@ void PointDetailsWidget::setXIndex(int xIndex) {
 					? tr::lng_channel_earn_chart_overriden_detail_credits
 					: tr::lng_channel_earn_chart_overriden_detail_currency)(
 						tr::now));
-			const auto provided = dataLine.y[xIndex];
-			const auto value = isCredits
-				? CreditsAmount(provided, CreditsType::Stars)
-				: CreditsAmount(
-					provided / kOneStarInNano,
-					provided % kOneStarInNano,
-					CreditsType::Ton);
 			copy.value.setText(
 				_textStyle,
-				Lang::FormatCreditsAmountDecimal(value));
+				Lang::FormatExactCountDecimal(
+					dataLine.y[xIndex] / multiplier));
 			_lines.push_back(std::move(copy));
 			textLine.name.setText(
 				_textStyle,
 				tr::lng_channel_earn_chart_overriden_detail_usd(tr::now));
 			textLine.value.setText(
 				_textStyle,
-				Info::ChannelEarn::ToUsd(value, _chartData.currencyRate, 0));
+				Info::ChannelEarn::ToUsd(
+					dataLine.y[xIndex],
+					_chartData.currencyRate, 0));
 		}
 		_lines.push_back(std::move(textLine));
 	}
@@ -482,7 +472,7 @@ void PointDetailsWidget::paintEvent(QPaintEvent *e) {
 				p.drawImage(
 					valueContext.position.x()
 						- _valueIcon.width() / style::DevicePixelRatio(),
-					lineY + st::lineWidth,
+					lineY,
 					_valueIcon);
 			}
 			const auto nameContext = Ui::Text::PaintContext{

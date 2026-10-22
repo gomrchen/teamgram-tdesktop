@@ -33,7 +33,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "media/clip/media_clip_reader.h"
 #include "menu/menu_send.h"
 #include "mtproto/sender.h"
-#include "settings/sections/settings_premium.h"
+#include "settings/settings_premium.h"
 #include "storage/storage_account.h"
 #include "ui/boxes/confirm_box.h"
 #include "ui/cached_round_corners.h"
@@ -56,7 +56,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/menu/menu_add_action_callback_factory.h"
 #include "ui/widgets/popup_menu.h"
 #include "ui/widgets/scroll_area.h"
-#include "window/window_session_controller.h"
 #include "styles/style_layers.h"
 #include "styles/style_chat_helpers.h"
 #include "styles/style_info.h"
@@ -221,14 +220,14 @@ StickerPremiumMark::StickerPremiumMark(
 : _lockIcon(lockIcon)
 , _part(part) {
 	style::PaletteChanged(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		_lockGray = QImage();
 		_star = QImage();
 	}, _lifetime);
 
 	Data::AmPremiumValue(
 		session
-	) | rpl::on_next([=](bool premium) {
+	) | rpl::start_with_next([=](bool premium) {
 		_premium = premium;
 	}, _lifetime);
 }
@@ -289,7 +288,6 @@ public:
 	[[nodiscard]] uint64 setId() const;
 
 	void install();
-	void showPreviewForDocument(DocumentId documentId);
 	[[nodiscard]] rpl::producer<uint64> setInstalled() const;
 	[[nodiscard]] rpl::producer<uint64> setArchived() const;
 	[[nodiscard]] rpl::producer<> updateControls() const;
@@ -468,8 +466,6 @@ private:
 
 	base::Timer _previewTimer;
 	int _previewShown = -1;
-	DocumentId _previewDocumentId = 0;
-	bool _previewLocked = false;
 
 	base::unique_qptr<Ui::PopupMenu> _menu;
 
@@ -484,13 +480,11 @@ StickerSetBox::StickerSetBox(
 	QWidget *parent,
 	std::shared_ptr<ChatHelpers::Show> show,
 	const StickerSetIdentifier &set,
-	Data::StickersType type,
-	DocumentId previewDocumentId)
+	Data::StickersType type)
 : _show(std::move(show))
 , _session(&_show->session())
 , _set(set)
-, _type(type)
-, _previewDocumentId(previewDocumentId) {
+, _type(type) {
 }
 
 StickerSetBox::StickerSetBox(
@@ -500,18 +494,16 @@ StickerSetBox::StickerSetBox(
 : StickerSetBox(parent, std::move(show), set->identifier(), set->type()) {
 }
 
-base::weak_qptr<Ui::BoxContent> StickerSetBox::Show(
+QPointer<Ui::BoxContent> StickerSetBox::Show(
 		std::shared_ptr<ChatHelpers::Show> show,
-		not_null<DocumentData*> document,
-		DocumentId previewDocumentId) {
+		not_null<DocumentData*> document) {
 	if (const auto sticker = document->sticker()) {
 		if (sticker->set) {
 			auto box = Box<StickerSetBox>(
 				show,
 				sticker->set,
-				sticker->setType,
-				previewDocumentId);
-			const auto result = base::make_weak(box.data());
+				sticker->setType);
+			const auto result = QPointer<Ui::BoxContent>(box.data());
 			show->showBox(std::move(box));
 			return result;
 		}
@@ -525,12 +517,9 @@ void StickerSetBox::prepare() {
 	_inner = setInnerWidget(
 		object_ptr<Inner>(this, _show, _set, _type),
 		st::stickersScroll);
-	if (const auto previewId = base::take(_previewDocumentId)) {
-		_inner->showPreviewForDocument(previewId);
-	}
 	_session->data().stickers().updated(
 		_type
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		updateButtons();
 	}, lifetime());
 
@@ -543,12 +532,12 @@ void StickerSetBox::prepare() {
 	updateTitleAndButtons();
 
 	_inner->updateControls(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		updateTitleAndButtons();
 	}, lifetime());
 
 	_inner->setInstalled(
-	) | rpl::on_next([=](uint64 setId) {
+	) | rpl::start_with_next([=](uint64 setId) {
 		if (_inner->setType() == Data::StickersType::Masks) {
 			showToast(tr::lng_masks_installed(tr::now));
 		} else if (_inner->setType() == Data::StickersType::Emoji) {
@@ -562,12 +551,12 @@ void StickerSetBox::prepare() {
 	}, lifetime());
 
 	_inner->errors(
-	) | rpl::on_next([=](Error error) {
+	) | rpl::start_with_next([=](Error error) {
 		handleError(error);
 	}, lifetime());
 
 	_inner->setArchived(
-	) | rpl::on_next([=](uint64 setId) {
+	) | rpl::start_with_next([=](uint64 setId) {
 		const auto type = _inner->setType();
 		if (type == Data::StickersType::Emoji) {
 			return;
@@ -597,13 +586,6 @@ void StickerSetBox::prepare() {
 		_session->data().stickers().notifyUpdated(type);
 
 		closeBox();
-	}, lifetime());
-
-	boxClosing(
-	) | rpl::on_next([show = _show] {
-		if (const auto window = show->resolveWindow()) {
-			window->widget()->hideMediaPreview();
-		}
 	}, lifetime());
 }
 
@@ -659,17 +641,24 @@ void ChangeSetNameBox(
 		const auto it = sets.find(input.id);
 		return (it == sets.end()) ? QString() : it->second->title;
 	}();
-	const auto field = box->addRow(object_ptr<Ui::InputField>(
+	const auto wrap = box->addRow(object_ptr<Ui::FixedHeightWidget>(
 		box,
+		st::editStickerSetNameField.heightMin));
+	auto owned = object_ptr<Ui::InputField>(
+		wrap,
 		st::editStickerSetNameField,
 		tr::lng_stickers_context_edit_name(),
-		wasName));
+		wasName);
+	const auto field = owned.data();
+	wrap->widthValue() | rpl::start_with_next([=](int width) {
+		field->move(0, 0);
+		field->resize(width, field->height());
+		wrap->resize(width, field->height());
+	}, wrap->lifetime());
 	field->selectAll();
 	constexpr auto kMaxSetNameLength = 50;
 	field->setMaxLength(kMaxSetNameLength);
-	Ui::AddLengthLimitLabel(field, kMaxSetNameLength, {
-		.customThreshold = kMaxSetNameLength + 1,
-	});
+	Ui::AddLengthLimitLabel(field, kMaxSetNameLength, kMaxSetNameLength + 1);
 	box->setFocusCallback([=] { field->setFocusFast(); });
 	const auto close = crl::guard(box, [=] { box->closeBox(); });
 	const auto save = [=, show = box->uiShow()] {
@@ -768,7 +757,7 @@ void StickerSetBox::updateButtons() {
 						_inner->setReorderState(true);
 						updateButtons();
 					},
-					&st::menuIconReorder);
+					&st::menuIconManage);
 			});
 		}();
 		if (_inner->notInstalled()) {
@@ -924,7 +913,7 @@ StickerSetBox::Inner::Inner(
 	_session->api().updateStickers();
 
 	_session->downloaderTaskFinished(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		updateItems();
 	}, lifetime());
 
@@ -1039,9 +1028,6 @@ void StickerSetBox::Inner::applySet(const TLStickerSet &set) {
 		_padding.top() + _rowsCount * _singleSize.height() + _padding.bottom());
 
 	_loaded = true;
-	if (const auto previewId = base::take(_previewDocumentId)) {
-		showPreviewForDocument(previewId);
-	}
 	updateSelected();
 	_updateControls.fire({});
 }
@@ -1158,14 +1144,6 @@ void StickerSetBox::Inner::installDone(
 }
 
 void StickerSetBox::Inner::mousePressEvent(QMouseEvent *e) {
-	if (_previewLocked) {
-		_previewLocked = false;
-		_previewShown = -1;
-		if (const auto window = _show->resolveWindow()) {
-			window->widget()->hideMediaPreview();
-		}
-		return;
-	}
 	if (e->button() != Qt::LeftButton) {
 		return;
 	}
@@ -1267,7 +1245,7 @@ void StickerSetBox::Inner::mouseMoveEvent(QMouseEvent *e) {
 		}
 		update();
 	}
-	if (_previewShown >= 0 && !_previewLocked) {
+	if (_previewShown >= 0) {
 		showPreviewAt(e->globalPos());
 	}
 }
@@ -1281,27 +1259,6 @@ void StickerSetBox::Inner::showPreviewAt(QPoint globalPos) {
 		_show->showMediaPreview(
 			Data::FileOriginStickerSet(_setId, _setAccessHash),
 			_pack[_previewShown]);
-	}
-}
-
-void StickerSetBox::Inner::showPreviewForDocument(DocumentId documentId) {
-	if (!_loaded) {
-		_previewDocumentId = documentId;
-		return;
-	}
-	const auto it = ranges::find(
-		_pack,
-		documentId,
-		&DocumentData::id);
-	if (it != _pack.end()) {
-		const auto index = int(it - _pack.begin());
-		if (index != _previewShown) {
-			_previewShown = index;
-			_previewLocked = true;
-			_show->showMediaPreview(
-				Data::FileOriginStickerSet(_setId, _setAccessHash),
-				_pack[index]);
-		}
 	}
 }
 
@@ -1390,12 +1347,6 @@ void StickerSetBox::Inner::mouseReleaseEvent(QMouseEvent *e) {
 			kStickerMoveDuration);
 	}
 	if (_previewShown >= 0) {
-		if (_previewLocked) {
-			_previewLocked = false;
-			if (const auto window = _show->resolveWindow()) {
-				window->widget()->hideMediaPreview();
-			}
-		}
 		_previewShown = -1;
 		return;
 	}
@@ -1534,7 +1485,7 @@ void StickerSetBox::Inner::fillDeleteStickerBox(
 		int index) {
 	Expects(index >= 0 || index < _pack.size());
 	const auto document = _pack[index];
-	const auto weak = base::make_weak(this);
+	const auto weak = Ui::MakeWeak(this);
 	const auto show = _show;
 
 	const auto container = box->verticalLayout();
@@ -1557,9 +1508,9 @@ void StickerSetBox::Inner::fillDeleteStickerBox(
 		animation->start();
 	}
 	sticker->paintRequest(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		auto p = Painter(sticker);
-		if ([[maybe_unused]] const auto strong = weak.get()) {
+		if (const auto strong = weak.data()) {
 			const auto paused = On(PowerSaving::kStickersPanel)
 				|| show->paused(ChatHelpers::PauseReason::Layer);
 			paintSticker(p, index, QPoint(), paused, crl::now());
@@ -1573,7 +1524,7 @@ void StickerSetBox::Inner::fillDeleteStickerBox(
 		tr::lng_stickers_context_delete(),
 		box->getDelegate()->style().title);
 	line->widthValue(
-	) | rpl::on_next([=](int width) {
+	) | rpl::start_with_next([=](int width) {
 		sticker->moveToLeft(st::boxRowPadding.left(), 0);
 		const auto skip = st::defaultBoxCheckbox.textPosition.x();
 		label->resizeToWidth(width
@@ -1600,11 +1551,11 @@ void StickerSetBox::Inner::fillDeleteStickerBox(
 		if (state->requestId.current()) {
 			return;
 		}
-		const auto weakBox = base::make_weak(box);
+		const auto weakBox = Ui::MakeWeak(box);
 		const auto buttonWidth = state->saveButton
 			? state->saveButton->width()
 			: 0;
-		state->requestId = document->session().api().request(
+		state->requestId = document->owner().session().api().request(
 			MTPstickers_RemoveStickerFromSet(document->mtpInput()
 		)).done([=](const TLStickerSet &result) {
 			result.match([&](const MTPDmessages_stickerSet &d) {
@@ -1613,14 +1564,14 @@ void StickerSetBox::Inner::fillDeleteStickerBox(
 					Data::StickersType::Stickers);
 			}, [](const auto &) {
 			});
-			if ([[maybe_unused]] const auto strong = weak.get()) {
+			if (const auto strong = weak.data()) {
 				applySet(result);
 			}
-			if (const auto strongBox = weakBox.get()) {
+			if (const auto strongBox = weakBox.data()) {
 				strongBox->closeBox();
 			}
 		}).fail([=](const MTP::Error &error) {
-			if (const auto strongBox = weakBox.get()) {
+			if (const auto strongBox = weakBox.data()) {
 				strongBox->uiShow()->showToast(error.type());
 			}
 		}).send();
@@ -1646,7 +1597,7 @@ void StickerSetBox::Inner::fillDeleteStickerBox(
 			state->requestId.value() | rpl::map(rpl::mappers::_1 > 0));
 	}
 	box->addButton(tr::lng_close(), [=] {
-		document->session().api().request(
+		document->owner().session().api().request(
 			state->requestId.current()).cancel();
 		box->closeBox();
 	});
@@ -1712,7 +1663,7 @@ not_null<Lottie::MultiPlayer*> StickerSetBox::Inner::getLottiePlayer() {
 			Lottie::Quality::Default,
 			Lottie::MakeFrameRenderer());
 		_lottiePlayer->updates(
-		) | rpl::on_next([=] {
+		) | rpl::start_with_next([=] {
 			updateItems();
 		}, lifetime());
 	}
@@ -2143,9 +2094,9 @@ bool StickerSetBox::Inner::official() const {
 
 rpl::producer<TextWithEntities> StickerSetBox::Inner::title() const {
 	if (!_loaded) {
-		return tr::lng_contacts_loading(tr::marked);
+		return tr::lng_contacts_loading() | Ui::Text::ToWithEntities();
 	} else if (_pack.isEmpty()) {
-		return tr::lng_attach_failed(tr::marked);
+		return tr::lng_attach_failed() | Ui::Text::ToWithEntities();
 	}
 	auto text = TextWithEntities{ _setTitle };
 	TextUtilities::ParseEntities(text, TextParseMentions);

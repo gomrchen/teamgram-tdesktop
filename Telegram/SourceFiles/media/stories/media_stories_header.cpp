@@ -17,8 +17,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "lang/lang_keys.h"
 #include "ui/controls/userpic_button.h"
 #include "ui/layers/box_content.h"
-#include "ui/text/custom_emoji_helper.h"
-#include "ui/text/custom_emoji_text_badge.h"
 #include "ui/text/format_values.h"
 #include "ui/text/text_utilities.h"
 #include "ui/widgets/buttons.h"
@@ -29,7 +27,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/painter.h"
 #include "ui/rp_widget.h"
 #include "ui/ui_utility.h"
-#include "styles/style_calls.h"
 #include "styles/style_media_view.h"
 
 #include <QtGui/QGuiApplication>
@@ -249,23 +246,19 @@ struct MadePrivacyBadge {
 	const auto index = data.fullIndex + 1;
 	const auto count = data.fullCount;
 	return count
-		? QString::fromUtf8(" %3 %1/%2")
-			.arg(index)
-			.arg(count)
-			.arg(Ui::kQBullet)
+		? QString::fromUtf8(" \xE2\x80\xA2 %1/%2").arg(index).arg(count)
 		: QString();
 }
 
 [[nodiscard]] Timestamp ComposeDetails(HeaderData data, TimeId now) {
 	auto result = ComposeTimestamp(data.date, now);
 	if (data.edited) {
-		result.text.append(' '
-			+ Ui::kQBullet
-			+ ' '
-			+ tr::lng_edited(tr::now));
+		result.text.append(
+			QString::fromUtf8(" \xE2\x80\xA2 ") + tr::lng_edited(tr::now));
 	}
 	if (data.fromPeer || !data.repostFrom.isEmpty()) {
-		result.text = Ui::kQBullet + ' ' + result.text;
+		result.text = QString::fromUtf8("\xE2\x80\xA2 ")
+			+ result.text;
 	}
 	return result;
 }
@@ -276,14 +269,17 @@ struct MadePrivacyBadge {
 			from,
 			st::storiesRepostUserpicPadding));
 	result.append(from->name());
-	return tr::link(result);
+	return Ui::Text::Link(result);
 }
 
 [[nodiscard]] TextWithEntities RepostNameValue(
 		not_null<Data::Session*> owner,
 		PeerData *peer,
 		QString name) {
-	auto result = Ui::Text::IconEmoji(&st::storiesRepostIcon);
+	auto result = Ui::Text::SingleCustomEmoji(
+		owner->customEmojiManager().registerInternalEmoji(
+			st::storiesRepostIcon,
+			st::storiesRepostIconPadding));
 	if (peer) {
 		result.append(Ui::Text::SingleCustomEmoji(
 			owner->customEmojiManager().peerUserpicEmojiData(
@@ -291,7 +287,7 @@ struct MadePrivacyBadge {
 				st::storiesRepostUserpicPadding)));
 	}
 	result.append(name);
-	return tr::link(result);
+	return Ui::Text::Link(result);
 }
 
 } // namespace
@@ -303,9 +299,8 @@ Header::Header(not_null<Controller*> controller)
 
 Header::~Header() = default;
 
-void Header::show(HeaderData data, rpl::producer<int> videoStreamViewers) {
+void Header::show(HeaderData data) {
 	if (_data == data) {
-		setVideoStreamViewers(std::move(videoStreamViewers));
 		return;
 	}
 	const auto peerChanged = !_data || (_data->peer != data.peer);
@@ -368,13 +363,13 @@ void Header::show(HeaderData data, rpl::producer<int> videoStreamViewers) {
 		rpl::combine(
 			_name->widthValue(),
 			raw->heightValue()
-		) | rpl::on_next(updateInfoGeometry, _name->lifetime());
+		) | rpl::start_with_next(updateInfoGeometry, _name->lifetime());
 
 		raw->show();
 		_widget = std::move(widget);
 
 		_controller->layoutValue(
-		) | rpl::on_next([=](const Layout &layout) {
+		) | rpl::start_with_next([=](const Layout &layout) {
 			raw->setGeometry(layout.header);
 			_contentGeometry = layout.content;
 			updateTooltipGeometry();
@@ -386,12 +381,12 @@ void Header::show(HeaderData data, rpl::producer<int> videoStreamViewers) {
 		std::move(timestamp.text),
 		st::storiesHeaderDate);
 	_date->setAttribute(Qt::WA_TransparentForMouseEvents);
+	_date->setOpacity(kDateOpacity);
 	_date->show();
 	_date->move(st::storiesHeaderDatePosition);
-	setVideoStreamViewers(std::move(videoStreamViewers));
 
 	_date->widthValue(
-	) | rpl::on_next(updateInfoGeometry, _date->lifetime());
+	) | rpl::start_with_next(updateInfoGeometry, _date->lifetime());
 
 	if (!data.fromPeer && data.repostFrom.isEmpty()) {
 		_repost = nullptr;
@@ -407,7 +402,7 @@ void Header::show(HeaderData data, rpl::producer<int> videoStreamViewers) {
 				data.repostFrom);
 		const auto prefix = data.fromPeer ? data.fromPeer : data.repostPeer;
 		_repost->setMarkedText(
-			(prefix ? tr::link(prefixName) : prefixName),
+			(prefix ? Ui::Text::Link(prefixName) : prefixName),
 			Core::TextContext({ .session = &data.peer->session() }));
 		if (prefix) {
 			_repost->setClickHandlerFilter([=](const auto &...) {
@@ -417,7 +412,7 @@ void Header::show(HeaderData data, rpl::producer<int> videoStreamViewers) {
 		}
 		_repost->show();
 		_repost->widthValue(
-		) | rpl::on_next(updateInfoGeometry, _repost->lifetime());
+		) | rpl::start_with_next(updateInfoGeometry, _repost->lifetime());
 	}
 
 	auto counter = ComposeCounter(data);
@@ -452,32 +447,26 @@ void Header::show(HeaderData data, rpl::producer<int> videoStreamViewers) {
 				&& _privacyBadgeGeometry.contains(
 					static_cast<QMouseEvent*>(e.get())->pos());
 			return (_privacyBadgeOver != over);
-		}) | rpl::on_next([=] {
+		}) | rpl::start_with_next([=] {
 			_privacyBadgeOver = !_privacyBadgeOver;
 			toggleTooltip(Tooltip::Privacy, _privacyBadgeOver);
 		}, _privacy->lifetime());
 	}
 
-	if (data.video || data.videoStream) {
-		if (data.video) {
-			createPlayPause();
-		}
+	if (data.video) {
+		createPlayPause();
 		createVolumeToggle();
 
-		_widget->widthValue() | rpl::on_next([=](int width) {
-			if (_playPause) {
-				const auto playPause = st::storiesPlayButtonPosition;
-				_playPause->moveToRight(playPause.x(), playPause.y(), width);
-			}
+		_widget->widthValue() | rpl::start_with_next([=](int width) {
+			const auto playPause = st::storiesPlayButtonPosition;
+			_playPause->moveToRight(playPause.x(), playPause.y(), width);
 			const auto volume = st::storiesVolumeButtonPosition;
 			_volumeToggle->moveToRight(volume.x(), volume.y(), width);
 			updateTooltipGeometry();
-		}, _volumeToggle->lifetime());
+		}, _playPause->lifetime());
 
-		if (data.video) {
-			_pauseState = _controller->pauseState();
-			applyPauseState();
-		}
+		_pauseState = _controller->pauseState();
+		applyPauseState();
 	} else {
 		_playPause = nullptr;
 		_volumeToggle = nullptr;
@@ -488,7 +477,7 @@ void Header::show(HeaderData data, rpl::producer<int> videoStreamViewers) {
 		_widget->widthValue(),
 		_counter ? _counter->widthValue() : rpl::single(0),
 		_dateUpdated.events_starting_with_copy(rpl::empty)
-	) | rpl::on_next([=](int outer, int counter, auto) {
+	) | rpl::start_with_next([=](int outer, int counter, auto) {
 		const auto right = _playPause
 			? _playPause->x()
 			: (outer - st::storiesHeaderMargin.right());
@@ -541,37 +530,6 @@ void Header::show(HeaderData data, rpl::producer<int> videoStreamViewers) {
 	}
 }
 
-void Header::setVideoStreamViewers(rpl::producer<int> viewers) {
-	_videoStreamViewersLifetime.destroy();
-	if (!_date) {
-		return;
-	} else if (!viewers) {
-		_date->setOpacity(kDateOpacity);
-		return;
-	}
-	_date->setOpacity(1.);
-	auto helper = Ui::Text::CustomEmojiHelper();
-	const auto badge = helper.paletteDependent(
-		Ui::Text::CustomEmojiTextBadge(
-			tr::lng_video_stream_live(tr::now).toUpper(),
-			st::groupCallMessageBadge,
-			st::groupCallMessageBadgeMargin));
-	const auto context = helper.context();
-	_videoStreamViewersLifetime = std::move(
-		viewers
-	) | rpl::on_next([=](int count) {
-		auto text = badge;
-		if (count) {
-			text.append(' ').append(tr::lng_group_call_rtmp_viewers(
-				tr::now,
-				lt_count_decimal,
-				count));
-		}
-		_date->setMarkedText(text, context);
-		_dateUpdated.fire({});
-	});
-}
-
 void Header::createPlayPause() {
 	struct PlayPauseState {
 		Ui::Animations::Simple overAnimation;
@@ -583,7 +541,7 @@ void Header::createPlayPause() {
 	const auto state = lifetime.make_state<PlayPauseState>();
 
 	_playPause->events(
-	) | rpl::on_next([=](not_null<QEvent*> e) {
+	) | rpl::start_with_next([=](not_null<QEvent*> e) {
 		const auto type = e->type();
 		if (type == QEvent::Enter || type == QEvent::Leave) {
 			const auto over = (e->type() == QEvent::Enter);
@@ -607,7 +565,7 @@ void Header::createPlayPause() {
 		}
 	}, lifetime);
 
-	_playPause->paintRequest() | rpl::on_next([=] {
+	_playPause->paintRequest() | rpl::start_with_next([=] {
 		auto p = QPainter(_playPause.get());
 		const auto paused = (_pauseState == PauseState::Paused)
 			|| (_pauseState == PauseState::InactivePaused);
@@ -641,11 +599,7 @@ void Header::createVolumeToggle() {
 		bool dropdownOver = false;
 	};
 	_volumeToggle = std::make_unique<Ui::RpWidget>(_widget.get());
-	_volume = std::make_unique<Ui::FadeWrap<Ui::RpWidget>>(
-		_widget->parentWidget(),
-		object_ptr<Ui::RpWidget>(_widget->parentWidget()));
-
-	auto &lifetime = _volume->lifetime();
+	auto &lifetime = _volumeToggle->lifetime();
 	const auto state = lifetime.make_state<VolumeState>();
 	state->silent = _data->silent;
 	state->hideTimer.setCallback([=] {
@@ -653,7 +607,7 @@ void Header::createVolumeToggle() {
 	});
 
 	_volumeToggle->events(
-	) | rpl::on_next([=](not_null<QEvent*> e) {
+	) | rpl::start_with_next([=](not_null<QEvent*> e) {
 		const auto type = e->type();
 		if (type == QEvent::Enter || type == QEvent::Leave) {
 			const auto over = (e->type() == QEvent::Enter);
@@ -671,7 +625,7 @@ void Header::createVolumeToggle() {
 		}
 	}, lifetime);
 
-	_volumeToggle->paintRequest() | rpl::on_next([=] {
+	_volumeToggle->paintRequest() | rpl::start_with_next([=] {
 		auto p = QPainter(_volumeToggle.get());
 		p.setOpacity(state->silent
 			? kControlOpacityDisabled
@@ -683,9 +637,12 @@ void Header::createVolumeToggle() {
 	}, lifetime);
 	updateVolumeIcon();
 
+	_volume = std::make_unique<Ui::FadeWrap<Ui::RpWidget>>(
+		_widget->parentWidget(),
+		object_ptr<Ui::RpWidget>(_widget->parentWidget()));
 	_volume->toggle(false, anim::type::instant);
 	_volume->events(
-	) | rpl::on_next([=](not_null<QEvent*> e) {
+	) | rpl::start_with_next([=](not_null<QEvent*> e) {
 		const auto type = e->type();
 		if (type == QEvent::Enter || type == QEvent::Leave) {
 			const auto over = (e->type() == QEvent::Enter);
@@ -706,7 +663,7 @@ void Header::createVolumeToggle() {
 		_widget->positionValue(),
 		_volumeToggle->positionValue(),
 		rpl::mappers::_1 + rpl::mappers::_2
-	) | rpl::on_next([=](QPoint position) {
+	) | rpl::start_with_next([=](QPoint position) {
 		_volume->move(position);
 	}, _volume->lifetime());
 
@@ -731,7 +688,7 @@ void Header::toggleTooltip(Tooltip type, bool show) {
 	}
 	const auto text = [&]() -> TextWithEntities {
 		using Privacy = Data::StoryPrivacy;
-		const auto boldName = tr::bold(_data->peer->shortName());
+		const auto boldName = Ui::Text::Bold(_data->peer->shortName());
 		const auto self = _data->peer->isSelf();
 		switch (type) {
 		case Tooltip::SilentVideo:
@@ -741,32 +698,32 @@ void Header::toggleTooltip(Tooltip type, bool show) {
 				return self
 					? tr::lng_stories_about_close_friends_my(
 						tr::now,
-						tr::rich)
+						Ui::Text::RichLangValue)
 					: tr::lng_stories_about_close_friends(
 						tr::now,
 						lt_user,
 						boldName,
-						tr::rich);
+						Ui::Text::RichLangValue);
 			case Privacy::Contacts:
 				return self
 					? tr::lng_stories_about_contacts_my(
 						tr::now,
-						tr::rich)
+						Ui::Text::RichLangValue)
 					: tr::lng_stories_about_contacts(
 						tr::now,
 						lt_user,
 						boldName,
-						tr::rich);
+						Ui::Text::RichLangValue);
 			case Privacy::SelectedContacts:
 				return self
 					? tr::lng_stories_about_selected_contacts_my(
 						tr::now,
-						tr::rich)
+						Ui::Text::RichLangValue)
 					: tr::lng_stories_about_selected_contacts(
 						tr::now,
 						lt_user,
 						boldName,
-						tr::rich);
+						Ui::Text::RichLangValue);
 			}
 		}
 		return {};
@@ -784,9 +741,9 @@ void Header::toggleTooltip(Tooltip type, bool show) {
 			st::storiesInfoTooltipLabel),
 		st::storiesInfoTooltip);
 	const auto tooltip = _tooltip.get();
-	const auto weak = base::make_weak(tooltip);
+	const auto weak = QPointer<QWidget>(tooltip);
 	const auto destroy = [=] {
-		delete weak.get();
+		delete weak.data();
 	};
 	tooltip->setAttribute(Qt::WA_TransparentForMouseEvents);
 	tooltip->setHiddenCallback(destroy);
@@ -855,7 +812,7 @@ void Header::rebuildVolumeControls(
 		dropdown.get(),
 		st::storiesVolumeButton);
 	_volumeIcon.value(
-	) | rpl::on_next([=](const style::icon *icon) {
+	) | rpl::start_with_next([=](const style::icon *icon) {
 		button->setIconOverride(icon, icon);
 	}, button->lifetime());
 
@@ -906,7 +863,7 @@ void Header::rebuildVolumeControls(
 	}
 
 	dropdown->paintRequest(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		auto p = QPainter(dropdown);
 		auto hq = PainterHighQualityEnabler(p);
 		const auto radius = button->width() / 2.;
@@ -962,7 +919,7 @@ rpl::producer<bool> Header::tooltipShownValue() const {
 }
 
 void Header::updateDateText() {
-	if (!_date || !_data || !_data->date || _videoStreamViewersLifetime) {
+	if (!_date || !_data || !_data->date) {
 		return;
 	}
 	auto timestamp = ComposeDetails(*_data, base::unixtime::now());

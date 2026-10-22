@@ -23,7 +23,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/effects/animation_value.h"
 #include "ui/effects/ripple_animation.h"
 #include "ui/image/image_prepare.h"
-#include "ui/power_saving.h"
 #include "ui/rect.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/shadow.h"
@@ -52,14 +51,14 @@ public:
 		ColorFactory cache)
 	: Ui::RippleButton(parent, st::defaultRippleAnimation) {
 		text(
-		) | rpl::on_next([this](const QString &t) {
+		) | rpl::start_with_next([this](const QString &t) {
 			const auto height = st::stickersHeaderBadgeFont->height;
 			resize(
 				st::stickersHeaderBadgeFont->width(t) + height,
 				height);
 			update();
 		}, lifetime());
-		paintRequest() | rpl::on_next([this, cache, text] {
+		paintRequest() | rpl::start_with_next([this, cache, text] {
 			auto p = QPainter(this);
 			const auto colors = cache();
 			const auto r = rect();
@@ -102,7 +101,7 @@ public:
 	Window::ChatThemeValueFromPeer(
 		controller,
 		peer
-	) | rpl::on_next([=](std::shared_ptr<Ui::ChatTheme> &&theme) {
+	) | rpl::start_with_next([=](std::shared_ptr<Ui::ChatTheme> &&theme) {
 		state->theme = std::move(theme);
 	}, widget->lifetime());
 
@@ -163,7 +162,7 @@ void FillSponsoredMessageBar(
 		container,
 		st::defaultRippleAnimationBgOver);
 	widget->show();
-	container->sizeValue() | rpl::on_next([=](const QSize &s) {
+	container->sizeValue() | rpl::start_with_next([=](const QSize &s) {
 		widget->resize(s);
 	}, widget->lifetime());
 	widget->setAcceptBoth();
@@ -220,13 +219,6 @@ void FillSponsoredMessageBar(
 			}
 		};
 	};
-	const auto paused = [=]() -> Fn<bool()> {
-		if (const auto c = FindSessionController(widget)) {
-			using Gif = Window::GifPauseReason;
-			return [=] { return c->isGifPausedAtLeastFor(Gif::Any); };
-		}
-		return [] { return false; };
-	};
 	const auto kLinesForPhoto = 3;
 	const auto rightPhotoSize = titleSt.font->ascent * kLinesForPhoto;
 	const auto rightPhotoPlaceholder = titleSt.font->height * kLinesForPhoto;
@@ -251,7 +243,7 @@ void FillSponsoredMessageBar(
 			st::dialogsCancelSearchInPeer);
 	if (rightHide) {
 		container->sizeValue(
-		) | rpl::on_next([=](const QSize &s) {
+		) | rpl::start_with_next([=](const QSize &s) {
 			rightHide->moveToRight(st::buttonRadius, st::lineWidth);
 		}, rightHide->lifetime());
 		rightHide->setClickedCallback(
@@ -365,8 +357,6 @@ void FillSponsoredMessageBar(
 				.geometry = Ui::Text::GeometryDescriptor{
 					.layout = std::move(lineLayout),
 				},
-				.pausedEmoji = On(PowerSaving::kEmojiChat) || paused(),
-				.pausedSpoiler = On(PowerSaving::kChatSpoiler) || paused(),
 			});
 			state->lastPaintedContentTop = top;
 			state->lastPaintedContentLineAmount = lastContentLineAmount;
@@ -378,14 +368,14 @@ void FillSponsoredMessageBar(
 				state->rightPhotoImage);
 		}
 	};
-	widget->paintRequest() | rpl::on_next([=] {
+	widget->paintRequest() | rpl::start_with_next([=] {
 		auto p = QPainter(widget);
 		draw(p);
 	}, widget->lifetime());
 	rpl::combine(
 		state->lastPaintedContentTop.value(),
 		state->lastPaintedContentLineAmount.value()
-	) | rpl::distinct_until_changed() | rpl::on_next([=](
+	) | rpl::distinct_until_changed() | rpl::start_with_next([=](
 			int lastTop,
 			int lastLines) {
 		const auto bottomPadding = st::msgReplyPadding.top();
@@ -411,7 +401,7 @@ void FillSponsoredMessageBar(
 	{
 		const auto top = Ui::CreateChild<PlainShadow>(widget);
 		const auto bottom = Ui::CreateChild<PlainShadow>(widget);
-		widget->sizeValue() | rpl::on_next([=] (const QSize &s) {
+		widget->sizeValue() | rpl::start_with_next([=] (const QSize &s) {
 			top->show();
 			top->raise();
 			top->resizeToWidth(s.width());

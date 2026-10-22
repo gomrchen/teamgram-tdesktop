@@ -21,7 +21,6 @@ class Show;
 
 namespace style {
 struct RoundButton;
-struct InputField;
 } // namespace style
 
 namespace Main {
@@ -54,6 +53,12 @@ using ConnectedBots = std::vector<ConnectedBot>;
 	rpl::producer<QString> title,
 	rpl::producer<QString> subtitle,
 	bool newBadge = false);
+
+[[nodiscard]] not_null<Ui::RoundButton*> AddFullWidthButton(
+	not_null<Ui::BoxContent*> box,
+	rpl::producer<QString> text,
+	Fn<void()> callback = nullptr,
+	const style::RoundButton *stOverride = nullptr);
 
 void AddFullWidthButtonFooter(
 	not_null<Ui::BoxContent*> box,
@@ -99,14 +104,5 @@ void FinishProgram(
 [[nodiscard]] ConnectedBots Parse(
 	not_null<Main::Session*> session,
 	const MTPpayments_ConnectedStarRefBots &bots);
-
-[[nodiscard]] object_ptr<Ui::AbstractButton> MakeLinkLabel(
-	not_null<QWidget*> parent,
-	const QString &link,
-	const style::InputField *stOverride = nullptr);
-[[nodiscard]] object_ptr<Ui::RpWidget> CreateLinkHeaderIcon(
-	not_null<QWidget*> parent,
-	not_null<Main::Session*> session,
-	int usersCount = 0);
 
 } // namespace Info::BotStarRef

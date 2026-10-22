@@ -54,7 +54,6 @@ enum class CheckoutResult {
 	Pending,
 	Cancelled,
 	Failed,
-	Free, // Gift transfer attempt that doesn't need any payment.
 };
 
 struct RealFormPresentedNotification {
@@ -189,7 +188,7 @@ private:
 	const not_null<Main::Session*> _session;
 	const std::unique_ptr<Form> _form;
 	const std::unique_ptr<Ui::Panel> _panel;
-	base::weak_qptr<PasscodeBox> _enterPasswordBox;
+	QPointer<PasscodeBox> _enterPasswordBox;
 	Fn<void(CheckoutResult)> _reactivate;
 	Fn<void(NonPanelPaymentForm)> _nonPanelPaymentFormProcess;
 	SubmitState _submitState = SubmitState::None;

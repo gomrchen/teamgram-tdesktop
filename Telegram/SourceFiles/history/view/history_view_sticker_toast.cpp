@@ -21,7 +21,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/premium_preview_box.h"
 #include "lottie/lottie_single_player.h"
 #include "window/window_session_controller.h"
-#include "settings/sections/settings_premium.h"
+#include "settings/settings_premium.h"
 #include "apiwrap.h"
 #include "styles/style_chat.h"
 
@@ -36,14 +36,7 @@ StickerToast::StickerToast(
 	not_null<Window::SessionController*> controller,
 	not_null<QWidget*> parent,
 	Fn<void()> destroy)
-: StickerToast(controller->uiShow(), parent, std::move(destroy)) {
-}
-
-StickerToast::StickerToast(
-	std::shared_ptr<ChatHelpers::Show> show,
-	not_null<QWidget*> parent,
-	Fn<void()> destroy)
-: _show(std::move(show))
+: _controller(controller)
 , _parent(parent)
 , _destroy(std::move(destroy)) {
 }
@@ -111,7 +104,7 @@ void StickerToast::requestSet() {
 	Expects(_for != nullptr);
 
 	if (const auto sticker = _for->sticker()) {
-		const auto api = &_show->session().api();
+		const auto api = &_controller->session().api();
 		_setRequestId = api->request(MTPmessages_GetStickerSet(
 			Data::InputStickerSet(sticker->set),
 			MTP_int(0) // hash
@@ -119,7 +112,7 @@ void StickerToast::requestSet() {
 			_setRequestId = 0;
 			result.match([&](const MTPDmessages_stickerSet &data) {
 				data.vset().match([&](const MTPDstickerSet &data) {
-					const auto owner = &_show->session().data();
+					const auto owner = &_controller->session().data();
 					showWithTitle(owner->stickers().getSetTitle(data));
 				});
 			}, [&](const MTPDmessages_stickerSetNotModified &) {
@@ -132,7 +125,7 @@ void StickerToast::requestSet() {
 }
 
 void StickerToast::cancelRequest() {
-	_show->session().api().request(base::take(_setRequestId)).cancel();
+	_controller->session().api().request(base::take(_setRequestId)).cancel();
 }
 
 void StickerToast::showWithTitle(const QString &title) {
@@ -145,14 +138,14 @@ void StickerToast::showWithTitle(const QString &title) {
 	const auto toSaved = isEmoji
 		&& (_section == Section::Message)
 		&& !(++counter % 2);
-	const auto text = tr::bold(
+	const auto text = Ui::Text::Bold(
 		title
 	).append('\n').append(
 		(toSaved
-			? tr::lng_animated_emoji_saved(tr::now, tr::rich)
+			? tr::lng_animated_emoji_saved(tr::now, Ui::Text::RichLangValue)
 			: isEmoji
-			? tr::lng_animated_emoji_text(tr::now, tr::rich)
-			: tr::lng_sticker_premium_text(tr::now, tr::rich))
+			? tr::lng_animated_emoji_text(tr::now, Ui::Text::RichLangValue)
+			: tr::lng_sticker_premium_text(tr::now, Ui::Text::RichLangValue))
 	);
 	_st = st::historyPremiumToast;
 	const auto skip = _st.padding.top();
@@ -207,7 +200,7 @@ void StickerToast::showWithTitle(const QString &title) {
 	rpl::combine(
 		widget->sizeValue(),
 		button->sizeValue()
-	) | rpl::on_next([=](QSize outer, QSize inner) {
+	) | rpl::start_with_next([=](QSize outer, QSize inner) {
 		button->moveToRight(
 			0,
 			(outer.height() - inner.height()) / 2,
@@ -226,28 +219,29 @@ void StickerToast::showWithTitle(const QString &title) {
 	}
 	button->setClickedCallback([=] {
 		if (toSaved) {
-			if (const auto window = _show->resolveWindow()) {
-				window->showPeerHistory(
-					window->session().userPeerId(),
-					Window::SectionShow::Way::Forward);
-			}
+			_controller->showPeerHistory(
+				_controller->session().userPeerId(),
+				Window::SectionShow::Way::Forward);
 			hideToast();
 			return;
 		} else if (_section == Section::TopicIcon) {
-			if (const auto window = _show->resolveWindow()) {
-				Settings::ShowPremium(window, u"forum_topic_icon"_q);
-			}
+			Settings::ShowPremium(_controller, u"forum_topic_icon"_q);
 			return;
 		}
-		const auto id = _for->sticker()->set;
+		const auto id = _for->sticker()->set.id;
 		const auto &sets = _for->owner().stickers().sets();
-		const auto i = sets.find(id.id);
+		const auto i = sets.find(id);
 		if (isEmoji
 			&& (i != end(sets))
 			&& (i->second->flags & Data::StickersSetFlag::Installed)) {
-			ShowPremiumPreviewBox(_show, PremiumFeature::AnimatedEmoji);
+			ShowPremiumPreviewBox(
+				_controller,
+				PremiumFeature::AnimatedEmoji);
 		} else {
-			_show->show(Box<StickerSetBox>(_show, id, setType));
+			_controller->show(Box<StickerSetBox>(
+				_controller->uiShow(),
+				_for->sticker()->set,
+				setType));
 		}
 		hideToast();
 	});
@@ -310,7 +304,7 @@ void StickerToast::setupEmojiPreview(
 		[=] { widget->update(); });
 
 	widget->paintRequest(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		auto p = QPainter(widget);
 		const auto size = Ui::Emoji::GetSizeLarge()
 			/ style::DevicePixelRatio();
@@ -336,7 +330,7 @@ void StickerToast::setupLottiePreview(not_null<Ui::RpWidget*> widget, int size) 
 		Lottie::Quality::Default);
 
 	widget->paintRequest(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		if (!player->ready()) {
 			return;
 		}
@@ -348,7 +342,7 @@ void StickerToast::setupLottiePreview(not_null<Ui::RpWidget*> widget, int size) 
 	}, widget->lifetime());
 
 	player->updates(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		widget->update();
 	}, widget->lifetime());
 }

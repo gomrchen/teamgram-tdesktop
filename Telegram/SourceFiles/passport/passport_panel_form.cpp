@@ -60,33 +60,43 @@ not_null<Ui::RpWidget*> PanelForm::setupContent() {
 	const auto inner = _scroll->setOwnedWidget(
 		object_ptr<Ui::VerticalLayout>(this));
 	_scroll->widthValue(
-	) | rpl::on_next([=](int width) {
+	) | rpl::start_with_next([=](int width) {
 		inner->resizeToWidth(width);
 	}, inner->lifetime());
 
-	_userpic = inner->add(
-		object_ptr<Ui::UserpicButton>(
+	const auto userpicWrap = inner->add(
+		object_ptr<Ui::FixedHeightWidget>(
 			inner,
+			st::passportFormUserpic.size.height()),
+		st::passportFormUserpicPadding);
+	_userpic = Ui::AttachParentChild(
+		userpicWrap,
+		object_ptr<Ui::UserpicButton>(
+			userpicWrap,
 			bot,
-			st::passportFormUserpic),
-		st::passportFormUserpicPadding,
-		style::al_top);
+			st::passportFormUserpic));
+	userpicWrap->widthValue(
+	) | rpl::start_with_next([=](int width) {
+		_userpic->move((width - _userpic->width()) / 2, _userpic->y());
+	}, _userpic->lifetime());
 
 	_about1 = inner->add(
-		object_ptr<Ui::FlatLabel>(
+		object_ptr<Ui::CenterWrap<Ui::FlatLabel>>(
 			inner,
-			tr::lng_passport_request1(tr::now, lt_bot, bot->name()),
-			st::passportPasswordLabelBold),
-		st::passportFormAbout1Padding,
-		style::al_top);
+			object_ptr<Ui::FlatLabel>(
+				inner,
+				tr::lng_passport_request1(tr::now, lt_bot, bot->name()),
+				st::passportPasswordLabelBold)),
+		st::passportFormAbout1Padding)->entity();
 
 	_about2 = inner->add(
-		object_ptr<Ui::FlatLabel>(
+		object_ptr<Ui::CenterWrap<Ui::FlatLabel>>(
 			inner,
-			tr::lng_passport_request2(tr::now),
-			st::passportPasswordLabel),
-		st::passportFormAbout2Padding,
-		style::al_top);
+			object_ptr<Ui::FlatLabel>(
+				inner,
+				tr::lng_passport_request2(tr::now),
+				st::passportPasswordLabel)),
+		st::passportFormAbout2Padding)->entity();
 
 	inner->add(object_ptr<Ui::BoxContentDivider>(
 		inner,
@@ -117,7 +127,7 @@ not_null<Ui::RpWidget*> PanelForm::setupContent() {
 		++index;
 	});
 	_controller->refillRows(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		auto index = 0;
 		_controller->fillRows([&](
 				QString title,
@@ -138,22 +148,22 @@ not_null<Ui::RpWidget*> PanelForm::setupContent() {
 	auto policyLink = tr::lng_passport_policy(
 		lt_bot,
 		rpl::single(bot->name())
-	) | rpl::map(
-		tr::url(policyUrl)
+	) | Ui::Text::ToLink(
+		policyUrl
 	) | rpl::map([=](TextWithEntities &&text) {
 		return Ui::Text::Wrapped(std::move(text), EntityType::Bold);
 	});
 	auto text = policyUrl.isEmpty()
 		? tr::lng_passport_allow(
 			lt_bot,
-			rpl::single(tr::marked('@' + bot->username())),
-			tr::marked)
+			rpl::single('@' + bot->username())
+		) | Ui::Text::ToWithEntities()
 		: tr::lng_passport_accept_allow(
 			lt_policy,
 			std::move(policyLink),
 			lt_bot,
-			rpl::single(tr::marked('@' + bot->username())),
-			tr::marked);
+			rpl::single('@' + bot->username()) | Ui::Text::ToWithEntities(),
+			Ui::Text::WithEntities);
 	const auto policy = inner->add(
 		object_ptr<Ui::FlatLabel>(
 			inner,

@@ -48,7 +48,6 @@ struct PeerShortInfoFields {
 	TextWithEntities about;
 	QString username;
 	Data::Birthday birthday;
-	TextWithEntities note;
 	bool isBio = false;
 };
 
@@ -189,7 +188,6 @@ private:
 	[[nodiscard]] rpl::producer<QString> birthdayLabel() const;
 	[[nodiscard]] rpl::producer<QString> birthdayValue() const;
 	[[nodiscard]] rpl::producer<TextWithEntities> aboutValue() const;
-	[[nodiscard]] rpl::producer<TextWithEntities> noteValue() const;
 
 	const style::ShortInfoBox &_st;
 	const PeerShortInfoType _type = PeerShortInfoType::User;

@@ -223,8 +223,7 @@ public:
 		setCheckedInternal(checked, animated);
 	}
 	void setCustomizedCheckSegments(
-		std::vector<Ui::OutlineSegment> segments,
-		bool liveBadge);
+		std::vector<Ui::OutlineSegment> segments);
 	void setHidden(bool hidden) {
 		_hidden = hidden;
 	}
@@ -372,7 +371,7 @@ public:
 
 	template <typename PeerDataRange>
 	void peerListAddSelectedPeers(PeerDataRange &&range) {
-		for (const auto &peer : range) {
+		for (const auto peer : range) {
 			peerListAddSelectedPeerInBunch(peer);
 		}
 		peerListFinishSelectedRowsBunch();
@@ -486,8 +485,8 @@ public:
 
 	virtual void prepare() = 0;
 
-	virtual void showFinished();
-	void setShowFinishedCallback(Fn<void()> callback);
+	virtual void showFinished() {
+	}
 
 	virtual void rowClicked(not_null<PeerListRow*> row) = 0;
 	virtual void rowMiddleClicked(not_null<PeerListRow*> row) {
@@ -620,8 +619,6 @@ private:
 
 	const style::PeerList *_listSt = nullptr;
 	const style::MultiSelect *_selectSt = nullptr;
-
-	Fn<void()> _showFinished;
 
 	rpl::lifetime _lifetime;
 
@@ -1145,7 +1142,7 @@ public:
 	void peerListScrollToTop() override;
 	std::shared_ptr<Main::SessionShow> peerListUiShow() override;
 
-	void setAddedTopScrollSkip(int skip, bool aboveSearch = false);
+	void setAddedTopScrollSkip(int skip);
 
 	void showFinished() override;
 
@@ -1181,8 +1178,7 @@ private:
 		PaintRoundImageCallback paintUserpic,
 		anim::type animated);
 	void createMultiSelect();
-	[[nodiscard]] int topScrollSkip() const;
-	[[nodiscard]] int topSelectSkip() const;
+	int getTopScrollSkip() const;
 	void updateScrollSkips();
 	void searchQueryChanged(const QString &query);
 
@@ -1193,7 +1189,6 @@ private:
 	std::unique_ptr<PeerListController> _controller;
 	Fn<void(PeerListBox*)> _init;
 	bool _scrollBottomFixed = false;
-	bool _addedTopScrollAboveSearch = false;
 	int _addedTopScrollSkip = 0;
 
 };

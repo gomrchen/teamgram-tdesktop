@@ -22,163 +22,26 @@ namespace Editor {
 namespace {
 
 constexpr auto kPrecision = 100000;
-constexpr auto kBrushesVersion = -1;
-constexpr auto kDefaultBrushSizeRatio = 0.9;
 
-[[nodiscard]] int ToolIndex(Brush::Tool tool) {
-	switch (tool) {
-	case Brush::Tool::Pen: return 0;
-	case Brush::Tool::Arrow: return 1;
-	case Brush::Tool::Marker: return 2;
-	case Brush::Tool::Eraser: return 3;
-	}
-	return 0;
-}
-
-[[nodiscard]] Brush::Tool ToolFromIndex(int index) {
-	switch (index) {
-	case 0: return Brush::Tool::Pen;
-	case 1: return Brush::Tool::Arrow;
-	case 2: return Brush::Tool::Marker;
-	case 3: return Brush::Tool::Eraser;
-	}
-	return Brush::Tool::Pen;
-}
-
-[[nodiscard]] Brush::Tool ToolFromSerialized(qint32 value) {
-	switch (value) {
-	case int(Brush::Tool::Pen): return Brush::Tool::Pen;
-	case int(Brush::Tool::Arrow): return Brush::Tool::Arrow;
-	case int(Brush::Tool::Marker): return Brush::Tool::Marker;
-	case int(Brush::Tool::Eraser): return Brush::Tool::Eraser;
-	}
-	return Brush::Tool::Pen;
-}
-
-[[nodiscard]] QColor DefaultBrushColor(Brush::Tool tool) {
-	switch (tool) {
-	case Brush::Tool::Pen: return QColor(234, 39, 57);
-	case Brush::Tool::Arrow: return QColor(252, 150, 77);
-	case Brush::Tool::Marker: return QColor(252, 222, 101);
-	case Brush::Tool::Eraser: return QColor(234, 39, 57);
-	}
-	return QColor(234, 39, 57);
-}
-
-[[nodiscard]] Brush DefaultBrush(Brush::Tool tool) {
-	auto result = Brush();
-	result.sizeRatio = kDefaultBrushSizeRatio;
-	result.color = DefaultBrushColor(tool);
-	result.tool = tool;
-	return result;
-}
-
-[[nodiscard]] std::array<Brush, 4> DefaultBrushes() {
-	auto result = std::array<Brush, 4>();
-	for (auto i = 0; i != int(result.size()); ++i) {
-		const auto tool = ToolFromIndex(i);
-		result[i] = DefaultBrush(tool);
-	}
-	return result;
-}
-
-struct BrushState {
-	std::array<Brush, 4> brushes = DefaultBrushes();
-	Brush::Tool tool = Brush::Tool::Pen;
-};
-
-[[nodiscard]] QByteArray Serialize(
-		const std::array<Brush, 4> &brushes,
-		Brush::Tool tool) {
+[[nodiscard]] QByteArray Serialize(const Brush &brush) {
 	auto result = QByteArray();
 	auto stream = QDataStream(&result, QIODevice::WriteOnly);
 	stream.setVersion(QDataStream::Qt_5_3);
-	stream
-		<< qint32(kBrushesVersion)
-		<< qint32(int(tool))
-		<< qint32(brushes.size());
-	for (auto i = 0; i != int(brushes.size()); ++i) {
-		const auto tool = ToolFromIndex(i);
-		const auto &brush = brushes[i];
-		stream
-			<< qint32(int(tool))
-			<< qint32(brush.sizeRatio * kPrecision)
-			<< brush.color;
-	}
+	stream << qint32(brush.sizeRatio * kPrecision) << brush.color;
 	stream.device()->close();
 
 	return result;
 }
 
-[[nodiscard]] BrushState Deserialize(const QByteArray &data) {
-	auto result = BrushState();
-	if (data.isEmpty()) {
-		return result;
-	}
+[[nodiscard]] Brush Deserialize(const QByteArray &data) {
 	auto stream = QDataStream(data);
-	auto head = qint32(0);
-	stream >> head;
-	if (stream.status() != QDataStream::Ok) {
-		return result;
-	}
-	if (head < 0) {
-		auto toolValue = qint32(int(Brush::Tool::Pen));
-		auto count = qint32(0);
-		stream >> toolValue >> count;
-		if (stream.status() != QDataStream::Ok) {
-			return result;
-		}
-		result.tool = ToolFromSerialized(toolValue);
-		auto limit = int(count);
-		if (limit < 0) {
-			limit = 0;
-		} else if (limit > int(result.brushes.size())) {
-			limit = int(result.brushes.size());
-		}
-		for (auto i = 0; i != limit; ++i) {
-			auto entryTool = qint32(int(Brush::Tool::Pen));
-			auto size = qint32(0);
-			auto color = QColor();
-			stream >> entryTool >> size >> color;
-			if (stream.status() != QDataStream::Ok) {
-				return result;
-			}
-			const auto tool = ToolFromSerialized(entryTool);
-			const auto index = ToolIndex(tool);
-			if (size > 0) {
-				result.brushes[index].sizeRatio = size / float(kPrecision);
-			}
-			if (color.isValid()) {
-				result.brushes[index].color = color;
-			}
-			result.brushes[index].tool = tool;
-		}
-		return result;
-	}
-	auto size = head;
-	auto color = QColor();
-	stream >> color;
-	if (stream.status() != QDataStream::Ok) {
-		return result;
-	}
-	auto toolValue = qint32(int(Brush::Tool::Pen));
-	if (!stream.atEnd()) {
-		stream >> toolValue;
-		if (stream.status() != QDataStream::Ok) {
-			toolValue = qint32(int(Brush::Tool::Pen));
-		}
-	}
-	const auto tool = ToolFromSerialized(toolValue);
-	const auto index = ToolIndex(tool);
-	if (size > 0) {
-		result.brushes[index].sizeRatio = size / float(kPrecision);
-	}
-	if (color.isValid()) {
-		result.brushes[index].color = color;
-	}
-	result.brushes[index].tool = tool;
-	result.tool = tool;
-	return result;
+	auto result = Brush();
+	auto size = qint32(0);
+	stream >> size >> result.color;
+	result.sizeRatio = size / float(kPrecision);
+	return (stream.status() != QDataStream::Ok)
+		? Brush()
+		: result;
 }
 
 } // namespace
@@ -216,7 +79,7 @@ PhotoEditor::PhotoEditor(
 			std::move(sessionShow))
 		: nullptr,
 	std::make_unique<UndoController>(),
-	show))
+	std::move(show)))
 , _content(base::make_unique_q<PhotoEditorContent>(
 	this,
 	photo,
@@ -228,16 +91,12 @@ PhotoEditor::PhotoEditor(
 	_controllers,
 	_modifications,
 	data))
-, _brushes(Deserialize(Core::App().settings().photoEditorBrush()).brushes)
-, _brushTool(Deserialize(Core::App().settings().photoEditorBrush()).tool)
 , _colorPicker(std::make_unique<ColorPicker>(
 	this,
-	std::move(show),
-	_brushes,
-	_brushTool)) {
+	Deserialize(Core::App().settings().photoEditorBrush()))) {
 
 	sizeValue(
-	) | rpl::on_next([=](const QSize &size) {
+	) | rpl::start_with_next([=](const QSize &size) {
 		if (size.isEmpty()) {
 			return;
 		}
@@ -245,11 +104,10 @@ PhotoEditor::PhotoEditor(
 	}, lifetime());
 
 	_content->innerRect(
-	) | rpl::on_next([=](QRect inner) {
+	) | rpl::start_with_next([=](QRect inner) {
 		if (inner.isEmpty()) {
 			return;
 		}
-		_colorPicker->setCanvasRect(inner.translated(_content->pos()));
 		const auto innerTop = _content->y() + inner.top();
 		const auto skip = st::photoEditorCropPointSize;
 		const auto controlsRect = rect()
@@ -258,23 +116,23 @@ PhotoEditor::PhotoEditor(
 	}, lifetime());
 
 	_controls->colorLinePositionValue(
-	) | rpl::on_next([=](const QPoint &p) {
+	) | rpl::start_with_next([=](const QPoint &p) {
 		_colorPicker->moveLine(p);
 	}, _controls->lifetime());
 
 	_controls->colorLineShownValue(
-	) | rpl::on_next([=](bool shown) {
+	) | rpl::start_with_next([=](bool shown) {
 		_colorPicker->setVisible(shown);
 	}, _controls->lifetime());
 
 	_mode.value(
-	) | rpl::on_next([=](const PhotoEditorMode &mode) {
+	) | rpl::start_with_next([=](const PhotoEditorMode &mode) {
 		_content->applyMode(mode);
 		_controls->applyMode(mode);
 	}, lifetime());
 
 	_controls->rotateRequests(
-	) | rpl::on_next([=](int angle) {
+	) | rpl::start_with_next([=](int angle) {
 		_modifications.angle += 90;
 		if (_modifications.angle >= 360) {
 			_modifications.angle -= 360;
@@ -283,13 +141,13 @@ PhotoEditor::PhotoEditor(
 	}, lifetime());
 
 	_controls->flipRequests(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		_modifications.flipped = !_modifications.flipped;
 		_content->applyModifications(_modifications);
 	}, lifetime());
 
 	_controls->paintModeRequests(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		_mode = PhotoEditorMode{
 			.mode = PhotoEditorMode::Mode::Paint,
 			.action = PhotoEditorMode::Action::None,
@@ -297,7 +155,7 @@ PhotoEditor::PhotoEditor(
 	}, lifetime());
 
 	_controls->doneRequests(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		const auto mode = _mode.current().mode;
 		if (mode == PhotoEditorMode::Mode::Paint) {
 			_mode = PhotoEditorMode{
@@ -314,7 +172,7 @@ PhotoEditor::PhotoEditor(
 	}, lifetime());
 
 	_controls->cancelRequests(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		const auto mode = _mode.current().mode;
 		if (mode == PhotoEditorMode::Mode::Paint) {
 			_mode = PhotoEditorMode{
@@ -331,12 +189,10 @@ PhotoEditor::PhotoEditor(
 	}, lifetime());
 
 	_colorPicker->saveBrushRequests(
-	) | rpl::on_next([=](const Brush &brush) {
+	) | rpl::start_with_next([=](const Brush &brush) {
 		_content->applyBrush(brush);
 
-		_brushTool = brush.tool;
-		_brushes[ToolIndex(brush.tool)] = brush;
-		const auto serialized = Serialize(_brushes, _brushTool);
+		const auto serialized = Serialize(brush);
 		if (Core::App().settings().photoEditorBrush() != serialized) {
 			Core::App().settings().setPhotoEditorBrush(serialized);
 			Core::App().saveSettingsDelayed();
@@ -368,16 +224,16 @@ void InitEditorLayer(
 		not_null<PhotoEditor*> editor,
 		Fn<void(PhotoModifications)> doneCallback) {
 	editor->cancelRequests(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		layer->closeLayer();
 	}, editor->lifetime());
 
-	const auto weak = base::make_weak(layer.get());
+	const auto weak = Ui::MakeWeak(layer.get());
 	editor->doneRequests(
-	) | rpl::on_next([=, done = std::move(doneCallback)](
+	) | rpl::start_with_next([=, done = std::move(doneCallback)](
 			const PhotoModifications &mods) {
 		done(mods);
-		if (const auto strong = weak.get()) {
+		if (const auto strong = weak.data()) {
 			strong->closeLayer();
 		}
 	}, editor->lifetime());

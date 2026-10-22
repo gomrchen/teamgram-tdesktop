@@ -13,7 +13,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/platform/ui_platform_window.h"
 #include "platform/platform_window_title.h"
 #include "history/history.h"
-#include "info/media/info_media_widget.h" // SharedMediaTitle.
 #include "window/window_separate_id.h"
 #include "window/window_session_controller.h"
 #include "window/window_lock_widgets.h"
@@ -71,7 +70,7 @@ using Core::WindowPosition;
 
 base::options::toggle OptionNewWindowsSizeAsFirst({
 	.id = kOptionNewWindowsSizeAsFirst,
-	.name = "Adjust size of new chat windows",
+	.name = "Adjust size of new chat windows.",
 	.description = "Open new windows with a size of the main window.",
 });
 
@@ -88,24 +87,42 @@ base::options::toggle OptionDisableTouchbar({
 	.restartRequired = true,
 });
 
-[[nodiscard]] QString TitleFromSeparateSharedMedia(
+[[nodiscard]] QString TitleFromSeparateId(
 		const Core::WindowTitleContent &settings,
 		const SeparateId &id) {
-	if (id.type != SeparateType::SharedMedia) {
+	if (id.sharedMedia == SeparateSharedMediaType::None
+		|| !id.sharedMediaPeer()) {
 		return QString();
 	}
-	const auto type = id.sharedMediaType;
-	const auto result = Info::Media::SharedMediaTitle(type)(tr::now);
+	const auto result = (id.sharedMedia == SeparateSharedMediaType::Photos)
+		? tr::lng_media_type_photos(tr::now)
+		: (id.sharedMedia == SeparateSharedMediaType::Videos)
+		? tr::lng_media_type_videos(tr::now)
+		: (id.sharedMedia == SeparateSharedMediaType::Files)
+		? tr::lng_media_type_files(tr::now)
+		: (id.sharedMedia == SeparateSharedMediaType::Audio)
+		? tr::lng_media_type_songs(tr::now)
+		: (id.sharedMedia == SeparateSharedMediaType::Links)
+		? tr::lng_media_type_links(tr::now)
+		: (id.sharedMedia == SeparateSharedMediaType::GIF)
+		? tr::lng_media_type_gifs(tr::now)
+		: (id.sharedMedia == SeparateSharedMediaType::Voices)
+		? tr::lng_media_type_audios(tr::now)
+		: QString();
+
 	if (settings.hideChatName) {
 		return result;
 	}
-	const auto thread = id.thread;
-	const auto topic = thread->asTopic();
+	const auto peer = id.sharedMediaPeer();
+	const auto topicRootId = id.sharedMediaTopicRootId();
+	const auto topic = topicRootId
+		? peer->forumTopicFor(topicRootId)
+		: nullptr;
 	const auto name = topic
 		? topic->title()
-		: thread->peer()->isSelf()
+		: peer->isSelf()
 		? tr::lng_saved_messages(tr::now)
-		: thread->peer()->name();
+		: peer->name();
 	const auto wrapped = st::wrap_rtl(name);
 	return name + u" @ "_q + result;
 }
@@ -370,19 +387,19 @@ MainWindow::MainWindow(not_null<Controller*> controller)
 , _outdated(Ui::CreateOutdatedBar(body(), cWorkingDir()))
 , _body(body()) {
 	style::PaletteChanged(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		updatePalette();
 	}, lifetime());
 
 	Core::App().unreadBadgeChanges(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		updateTitle();
 		unreadCounterChangedHook();
 		Core::App().tray().updateIconCounters();
 	}, lifetime());
 
 	Core::App().settings().workModeChanges(
-	) | rpl::on_next([=](Core::Settings::WorkMode mode) {
+	) | rpl::start_with_next([=](Core::Settings::WorkMode mode) {
 		workmodeUpdated(mode);
 	}, lifetime());
 
@@ -391,27 +408,27 @@ MainWindow::MainWindow(not_null<Controller*> controller)
 	}
 
 	windowActiveValue(
-	) | rpl::skip(1) | rpl::on_next([=](bool active) {
+	) | rpl::skip(1) | rpl::start_with_next([=](bool active) {
 		InvokeQueued(this, [=] {
 			handleActiveChanged(active);
 		});
 	}, lifetime());
 
 	shownValue(
-	) | rpl::skip(1) | rpl::on_next([=](bool visible) {
+	) | rpl::skip(1) | rpl::start_with_next([=](bool visible) {
 		InvokeQueued(this, [=] {
 			handleVisibleChanged(visible);
 		});
 	}, lifetime());
 
 	body()->sizeValue(
-	) | rpl::on_next([=](QSize size) {
+	) | rpl::start_with_next([=](QSize size) {
 		updateControlsGeometry();
 	}, lifetime());
 
 	if (_outdated) {
 		_outdated->heightValue(
-		) | rpl::on_next([=](int height) {
+		) | rpl::start_with_next([=](int height) {
 			if (!height) {
 				crl::on_main(this, [=] { _outdated.destroy(); });
 			}
@@ -503,7 +520,7 @@ void MainWindow::init() {
 
 	if (Ui::Platform::NativeWindowFrameSupported()) {
 		Core::App().settings().nativeWindowFrameChanges(
-		) | rpl::on_next([=](bool native) {
+		) | rpl::start_with_next([=](bool native) {
 			refreshTitleWidget();
 			recountGeometryConstraints();
 		}, lifetime());
@@ -700,12 +717,111 @@ QRect MainWindow::countInitialGeometry(WindowPosition position) {
 		.w = initialWidth,
 		.h = initialHeight,
 	};
-	return CountInitialGeometry(
-		this,
+	return countInitialGeometry(
 		position,
 		initial,
-		{ st::windowMinWidth, st::windowMinHeight },
-		u"Window"_q);
+		{ st::windowMinWidth, st::windowMinHeight });
+}
+
+QRect MainWindow::countInitialGeometry(
+		WindowPosition position,
+		WindowPosition initial,
+		QSize minSize) const {
+	if (!position.w || !position.h) {
+		return initial.rect();
+	}
+	const auto screen = [&]() -> QScreen* {
+		for (const auto screen : QGuiApplication::screens()) {
+			const auto sum = Platform::ScreenNameChecksum(screen->name());
+			if (position.moncrc == sum) {
+				return screen;
+			}
+		}
+		return nullptr;
+	}();
+	if (!screen) {
+		return initial.rect();
+	}
+	const auto frame = frameMargins();
+	const auto screenGeometry = screen->geometry();
+	const auto availableGeometry = screen->availableGeometry();
+	const auto spaceForInner = availableGeometry.marginsRemoved(frame);
+	DEBUG_LOG(("Window Pos: "
+		"Screen found, screen geometry: %1, %2, %3, %4, "
+		"available: %5, %6, %7, %8"
+		).arg(screenGeometry.x()
+		).arg(screenGeometry.y()
+		).arg(screenGeometry.width()
+		).arg(screenGeometry.height()
+		).arg(availableGeometry.x()
+		).arg(availableGeometry.y()
+		).arg(availableGeometry.width()
+		).arg(availableGeometry.height()));
+	DEBUG_LOG(("Window Pos: "
+		"Window frame margins: %1, %2, %3, %4, "
+		"available space for inner geometry: %5, %6, %7, %8"
+		).arg(frame.left()
+		).arg(frame.top()
+		).arg(frame.right()
+		).arg(frame.bottom()
+		).arg(spaceForInner.x()
+		).arg(spaceForInner.y()
+		).arg(spaceForInner.width()
+		).arg(spaceForInner.height()));
+
+	const auto x = spaceForInner.x() - screenGeometry.x();
+	const auto y = spaceForInner.y() - screenGeometry.y();
+	const auto w = spaceForInner.width();
+	const auto h = spaceForInner.height();
+	if (w < st::windowMinWidth || h < st::windowMinHeight) {
+		return initial.rect();
+	}
+	if (position.x < x) position.x = x;
+	if (position.y < y) position.y = y;
+	if (position.w > w) position.w = w;
+	if (position.h > h) position.h = h;
+	const auto rightPoint = position.x + position.w;
+	const auto screenRightPoint = x + w;
+	if (rightPoint > screenRightPoint) {
+		const auto distance = rightPoint - screenRightPoint;
+		const auto newXPos = position.x - distance;
+		if (newXPos >= x) {
+			position.x = newXPos;
+		} else {
+			position.x = x;
+			const auto newRightPoint = position.x + position.w;
+			const auto newDistance = newRightPoint - screenRightPoint;
+			position.w -= newDistance;
+		}
+	}
+	const auto bottomPoint = position.y + position.h;
+	const auto screenBottomPoint = y + h;
+	if (bottomPoint > screenBottomPoint) {
+		const auto distance = bottomPoint - screenBottomPoint;
+		const auto newYPos = position.y - distance;
+		if (newYPos >= y) {
+			position.y = newYPos;
+		} else {
+			position.y = y;
+			const auto newBottomPoint = position.y + position.h;
+			const auto newDistance = newBottomPoint - screenBottomPoint;
+			position.h -= newDistance;
+		}
+	}
+	position.x += screenGeometry.x();
+	position.y += screenGeometry.y();
+	if ((position.x + st::windowMinWidth
+		> screenGeometry.x() + screenGeometry.width())
+		|| (position.y + st::windowMinHeight
+			> screenGeometry.y() + screenGeometry.height())) {
+		return initial.rect();
+	}
+	DEBUG_LOG(("Window Pos: Resulting geometry is %1, %2, %3, %4"
+		).arg(position.x
+		).arg(position.y
+		).arg(position.w
+		).arg(position.h));
+	return position.rect();
 }
 
 void MainWindow::firstShow() {
@@ -786,11 +902,11 @@ void MainWindow::updateTitle() {
 		&& Core::App().domain().accountsAuthedCount() > 1)
 		? st::wrap_rtl(session->authedName())
 		: QString();
-	const auto separateSharedMediaTitle = session
-		? TitleFromSeparateSharedMedia(settings, session->windowId())
+	const auto separateIdTitle = session
+		? TitleFromSeparateId(settings, session->windowId())
 		: QString();
-	if (!separateSharedMediaTitle.isEmpty()) {
-		setTitle(separateSharedMediaTitle);
+	if (!separateIdTitle.isEmpty()) {
+		setTitle(separateIdTitle);
 		return;
 	}
 	const auto key = (session && !settings.hideChatName)
@@ -882,8 +998,7 @@ WindowPosition MainWindow::withScreenInPosition(
 	return PositionWithScreen(
 		position,
 		this,
-		{ st::windowMinWidth, st::windowMinHeight },
-		u"Window"_q);
+		{ st::windowMinWidth, st::windowMinHeight });
 }
 
 bool MainWindow::minimizeToTray() {
@@ -897,7 +1012,7 @@ bool MainWindow::minimizeToTray() {
 	return true;
 }
 
-void MainWindow::showRightColumn(object_ptr<Ui::RpWidget> widget) {
+void MainWindow::showRightColumn(object_ptr<TWidget> widget) {
 	const auto wasWidth = width();
 	const auto wasRightWidth = _rightColumn ? _rightColumn->width() : 0;
 	_rightColumn = std::move(widget);
@@ -958,16 +1073,12 @@ int MainWindow::tryToExtendWidthBy(int addToWidth) {
 
 void MainWindow::launchDrag(
 		std::unique_ptr<QMimeData> data,
-		Fn<void()> &&callback,
-		QPixmap pixmap) {
+		Fn<void()> &&callback) {
 	// Qt destroys this QDrag automatically after the drag is finished
 	// We must not delete this at the end of this function, as this breaks DnD on Linux
 	auto drag = new QDrag(this);
 	KUrlMimeData::exportUrlsToPortal(data.get());
 	drag->setMimeData(data.release());
-	if (!pixmap.isNull()) {
-		drag->setPixmap(std::move(pixmap));
-	}
 	drag->exec(Qt::CopyAction);
 
 	// We don't receive mouseReleaseEvent when drag is finished.
@@ -996,8 +1107,7 @@ int32 DefaultScreenNameChecksum(const QString &name) {
 WindowPosition PositionWithScreen(
 		WindowPosition position,
 		const QScreen *chosen,
-		QSize minimal,
-		const QString &name) {
+		QSize minimal) {
 	if (!chosen) {
 		return position;
 	}
@@ -1015,136 +1125,26 @@ WindowPosition PositionWithScreen(
 		position.y = available.y() + available.height() - position.h;
 	}
 	const auto geometry = chosen->geometry();
-	DEBUG_LOG(("%1 Pos: Screen found, geometry: %2, %3, %4, %5"
-		).arg(name
+	DEBUG_LOG(("Window Pos: Screen found, geometry: %1, %2, %3, %4"
 		).arg(geometry.x()
 		).arg(geometry.y()
 		).arg(geometry.width()
 		).arg(geometry.height()));
+	position.x -= geometry.x();
+	position.y -= geometry.y();
+	position.moncrc = Platform::ScreenNameChecksum(chosen->name());
 	return position;
 }
 
 WindowPosition PositionWithScreen(
 		WindowPosition position,
 		not_null<const QWidget*> widget,
-		QSize minimal,
-		const QString &name) {
+		QSize minimal) {
 	const auto screen = widget->screen();
 	return PositionWithScreen(
 		position,
 		screen ? screen : QGuiApplication::primaryScreen(),
-		minimal,
-		name);
-}
-
-QRect CountInitialGeometry(
-		not_null<const Ui::RpWindow*> widget,
-		WindowPosition position,
-		WindowPosition initial,
-		QSize minSize,
-		const QString &name) {
-	if (!position.w || !position.h) {
-		return initial.rect();
-	}
-	const auto screen = [&]() -> QScreen* {
-		for (const auto screen : QGuiApplication::screens()) {
-			const auto sum = Platform::ScreenNameChecksum(screen->name());
-			if (position.moncrc == sum) {
-				return screen;
-			}
-		}
-		return QGuiApplication::screenAt(position.rect().center());
-	}();
-	if (!screen) {
-		return initial.rect();
-	}
-	const auto frame = widget->frameMargins();
-	const auto screenGeometry = screen->geometry();
-	const auto availableGeometry = screen->availableGeometry();
-	const auto spaceForInner = availableGeometry.marginsRemoved(frame);
-	DEBUG_LOG(("%1 Pos: "
-		"Screen found, screen geometry: %2, %3, %4, %5, "
-		"available: %6, %7, %8, %9"
-		).arg(name
-		).arg(screenGeometry.x()
-		).arg(screenGeometry.y()
-		).arg(screenGeometry.width()
-		).arg(screenGeometry.height()
-		).arg(availableGeometry.x()
-		).arg(availableGeometry.y()
-		).arg(availableGeometry.width()
-		).arg(availableGeometry.height()));
-	DEBUG_LOG(("%1 Pos: "
-		"Window frame margins: %2, %3, %4, %5, "
-		"available space for inner geometry: %6, %7, %8, %9"
-		).arg(name
-		).arg(frame.left()
-		).arg(frame.top()
-		).arg(frame.right()
-		).arg(frame.bottom()
-		).arg(spaceForInner.x()
-		).arg(spaceForInner.y()
-		).arg(spaceForInner.width()
-		).arg(spaceForInner.height()));
-
-	const auto x = spaceForInner.x()
-		- (position.moncrc ? screenGeometry.x() : 0);
-	const auto y = spaceForInner.y()
-		- (position.moncrc ? screenGeometry.y() : 0);
-	const auto w = spaceForInner.width();
-	const auto h = spaceForInner.height();
-	if (w < st::windowMinWidth || h < st::windowMinHeight) {
-		return initial.rect();
-	}
-	if (position.x < x) position.x = x;
-	if (position.y < y) position.y = y;
-	if (position.w > w) position.w = w;
-	if (position.h > h) position.h = h;
-	const auto rightPoint = position.x + position.w;
-	const auto screenRightPoint = x + w;
-	if (rightPoint > screenRightPoint) {
-		const auto distance = rightPoint - screenRightPoint;
-		const auto newXPos = position.x - distance;
-		if (newXPos >= x) {
-			position.x = newXPos;
-		} else {
-			position.x = x;
-			const auto newRightPoint = position.x + position.w;
-			const auto newDistance = newRightPoint - screenRightPoint;
-			position.w -= newDistance;
-		}
-	}
-	const auto bottomPoint = position.y + position.h;
-	const auto screenBottomPoint = y + h;
-	if (bottomPoint > screenBottomPoint) {
-		const auto distance = bottomPoint - screenBottomPoint;
-		const auto newYPos = position.y - distance;
-		if (newYPos >= y) {
-			position.y = newYPos;
-		} else {
-			position.y = y;
-			const auto newBottomPoint = position.y + position.h;
-			const auto newDistance = newBottomPoint - screenBottomPoint;
-			position.h -= newDistance;
-		}
-	}
-	if (position.moncrc) {
-		position.x += screenGeometry.x();
-		position.y += screenGeometry.y();
-	}
-	if ((position.x + st::windowMinWidth
-		> screenGeometry.x() + screenGeometry.width())
-		|| (position.y + st::windowMinHeight
-			> screenGeometry.y() + screenGeometry.height())) {
-		return initial.rect();
-	}
-	DEBUG_LOG(("%1 Pos: Resulting geometry is %2, %3, %4, %5"
-		).arg(name
-		).arg(position.x
-		).arg(position.y
-		).arg(position.w
-		).arg(position.h));
-	return position.rect();
+		minimal);
 }
 
 } // namespace Window

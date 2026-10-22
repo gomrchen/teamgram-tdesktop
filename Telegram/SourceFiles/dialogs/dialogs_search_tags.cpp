@@ -52,14 +52,24 @@ namespace {
 	});
 }
 
-[[nodiscard]] Ui::Text::String FillAdditionalText(int width) {
-	auto emoji = Ui::Text::IconEmoji(&st::dialogsSearchTagArrow);
+[[nodiscard]] Ui::Text::String FillAdditionalText(
+		not_null<Data::Session*> owner,
+		int width) {
+	auto emoji = Ui::Text::SingleCustomEmoji(
+		owner->customEmojiManager().registerInternalEmoji(
+			st::dialogsSearchTagArrow,
+			st::dialogsSearchTagArrowPadding));
 	auto result = Ui::Text::String();
+	const auto context = Core::TextContext({
+		.session = &owner->session(),
+		.customEmojiLoopLimit = 1,
+	});
 	const auto attempt = [&](const auto &phrase) {
 		result.setMarkedText(
 			st::dialogsSearchTagPromo,
-			phrase(tr::now, lt_arrow, emoji, tr::marked),
-			kMarkupTextOptions);
+			phrase(tr::now, lt_arrow, emoji, Ui::Text::WithEntities),
+			kMarkupTextOptions,
+			context);
 		return result.maxWidth() < width;
 	};
 	if (attempt(tr::lng_add_tag_phrase_long)
@@ -92,7 +102,7 @@ SearchTags::SearchTags(
 	rpl::combine(
 		std::move(tags),
 		Data::AmPremiumValue(&owner->session())
-	) | rpl::on_next([=](
+	) | rpl::start_with_next([=](
 			const std::vector<Data::Reaction> &list,
 			bool premium) {
 		fill(list, premium);
@@ -107,7 +117,7 @@ SearchTags::SearchTags(
 	}
 
 	style::PaletteChanged(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		_normalBg = _selectedBg = QImage();
 	}, _lifetime);
 }
@@ -220,7 +230,7 @@ void SearchTags::layout() {
 	if (_tags.size() == 1 && _tags.front().promo) {
 		_additionalLeft = x - skip.x() + st::dialogsSearchTagPromoSkip;
 		const auto additionalWidth = _width - _additionalLeft;
-		_additionalText = FillAdditionalText(additionalWidth);
+		_additionalText = FillAdditionalText(_owner, additionalWidth);
 	} else {
 		_additionalText = {};
 	}

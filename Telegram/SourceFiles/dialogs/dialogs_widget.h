@@ -53,9 +53,6 @@ class JumpDownButton;
 class ElasticScroll;
 template <typename Widget>
 class FadeWrapScaled;
-template <typename Widget>
-class SlideWrap;
-class VerticalLayout;
 } // namespace Ui
 
 namespace Window {
@@ -110,8 +107,6 @@ public:
 		const Window::SectionShow &params);
 	void setInnerFocus(bool unfocusSearch = false);
 	[[nodiscard]] bool searchHasFocus() const;
-
-	[[nodiscard]] Data::Forum *openedForum() const;
 
 	void jumpToTop(bool belowPinned = false);
 	void raiseWithTooltip();
@@ -213,7 +208,6 @@ private:
 	void setupShortcuts();
 	void setupStories();
 	void setupSwipeBack();
-	void setupTopBarSuggestions(not_null<Ui::VerticalLayout*> dialogs);
 	void storiesExplicitCollapse();
 	void collectStoriesUserpicsViews(Data::StorySourcesList list);
 	void storiesToggleExplicitExpand(bool expand);
@@ -229,7 +223,6 @@ private:
 	void showMainMenu();
 	void clearSearchCache(bool clearPosts);
 	void setSearchQuery(const QString &query, int cursorPosition = -1);
-	void updateTopBarSuggestions();
 	void updateFrozenAccountBar();
 	void updateControlsVisibility(bool fast = false);
 	void updateLockUnlockVisibility(
@@ -287,7 +280,6 @@ private:
 	void updateLockUnlockPosition();
 	void updateSuggestions(anim::type animated);
 	void processSearchFocusChange();
-	void closeSuggestions();
 
 	[[nodiscard]] bool redirectToSearchPossible() const;
 	[[nodiscard]] bool redirectKeyToSearch(QKeyEvent *e) const;
@@ -306,7 +298,7 @@ private:
 	base::Timer _chooseByDragTimer;
 
 	const Layout _layout = Layout::Main;
-	const int _narrowWidth = 0;
+	int _narrowWidth = 0;
 
 	std::unique_ptr<Ui::AbstractButton> _frozenAccountBar;
 
@@ -321,7 +313,7 @@ private:
 	object_ptr<Ui::FadeWrapScaled<Ui::IconButton>> _chooseFromUser;
 	object_ptr<Ui::FadeWrapScaled<Ui::IconButton>> _jumpToDate;
 	object_ptr<Ui::CrossButton> _cancelSearch;
-	object_ptr<Ui::FadeWrapScaled<Ui::IconButton>> _lockUnlock;
+	object_ptr< Ui::FadeWrapScaled<Ui::IconButton>> _lockUnlock;
 
 	std::unique_ptr<Ui::MoreChatsBar> _moreChatsBar;
 
@@ -331,11 +323,6 @@ private:
 	std::unique_ptr<HistoryView::ContactStatus> _forumReportBar;
 
 	base::unique_qptr<Ui::RpWidget> _chatFilters;
-
-	QPointer<Ui::SlideWrap<Ui::RpWidget>> _topBarSuggestion;
-	rpl::event_stream<int> _topBarSuggestionHeightChanged;
-	rpl::event_stream<bool> _searchStateForTopBarSuggestion;
-	rpl::event_stream<bool> _openedFolderOrForumChanges;
 
 	object_ptr<Ui::ElasticScroll> _scroll;
 	QPointer<InnerWidget> _inner;

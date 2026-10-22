@@ -33,7 +33,6 @@ public:
 		Birthday,
 		GiftsAutoSave,
 		NoPaidMessages,
-		SavedMusic,
 	};
 	enum class Option {
 		Everyone,

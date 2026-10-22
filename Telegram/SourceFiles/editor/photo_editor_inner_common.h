@@ -26,15 +26,8 @@ struct PhotoEditorMode {
 };
 
 struct Brush {
-	enum class Tool : uchar {
-		Pen,
-		Arrow,
-		Marker,
-		Eraser,
-	};
-	float64 sizeRatio = 0.;
+	float sizeRatio = 0.;
 	QColor color;
-	Tool tool = Tool::Pen;
 };
 
 enum class SaveState {

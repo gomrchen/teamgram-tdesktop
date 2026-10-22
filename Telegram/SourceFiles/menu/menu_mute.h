@@ -7,13 +7,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
-#include "data/notify/data_peer_notify_volume.h" // VolumeController
-
 namespace Data {
 class Thread;
 struct NotifySound;
-enum class DefaultNotify : uint8_t;
-struct VolumeController;
+enum class DefaultNotify;
 } // namespace Data
 
 namespace Main {
@@ -34,7 +31,6 @@ struct Descriptor {
 	Fn<std::optional<Data::NotifySound>()> currentSound;
 	Fn<void(Data::NotifySound)> updateSound;
 	Fn<void(TimeId)> updateMutePeriod;
-	Data::VolumeController volumeController;
 };
 
 [[nodiscard]] Descriptor ThreadDescriptor(not_null<Data::Thread*> thread);
@@ -51,8 +47,7 @@ void SetupMuteMenu(
 	not_null<Ui::RpWidget*> parent,
 	rpl::producer<> triggers,
 	Fn<std::optional<Descriptor>()> makeDescriptor,
-	std::shared_ptr<Ui::Show> show,
-	Fn<QPoint()> positionCallback = nullptr);
+	std::shared_ptr<Ui::Show> show);
 
 inline void FillMuteMenu(
 		not_null<Ui::PopupMenu*> menu,
@@ -65,14 +60,13 @@ inline void SetupMuteMenu(
 		not_null<Ui::RpWidget*> parent,
 		rpl::producer<> triggers,
 		Fn<Data::Thread*()> makeThread,
-		std::shared_ptr<Ui::Show> show,
-		Fn<QPoint()> positionCallback = nullptr) {
+		std::shared_ptr<Ui::Show> show) {
 	SetupMuteMenu(parent, std::move(triggers), [=] {
 		const auto thread = makeThread();
 		return thread
 			? ThreadDescriptor(thread)
 			: std::optional<Descriptor>();
-	}, std::move(show), positionCallback);
+	}, std::move(show));
 }
 
 } // namespace MuteMenu

@@ -377,10 +377,7 @@ rpl::producer<SparseIdsMergedSlice> SparseIdsMergedSlice::CreateViewer(
 		int limitBefore,
 		int limitAfter,
 		Fn<SimpleViewerFunction> simpleViewer) {
-	Expects(!key.topicRootId
-		|| (!key.monoforumPeerId && !key.migratedPeerId));
-	Expects(!key.monoforumPeerId
-		|| (!key.topicRootId && !key.migratedPeerId));
+	Expects(!key.topicRootId || !key.migratedPeerId);
 	Expects(IsServerMsgId(key.universalId)
 		|| (key.universalId == 0)
 		|| (IsServerMsgId(ServerMaxMsgId + key.universalId) && key.migratedPeerId != 0));
@@ -391,7 +388,6 @@ rpl::producer<SparseIdsMergedSlice> SparseIdsMergedSlice::CreateViewer(
 		auto partViewer = simpleViewer(
 			key.peerId,
 			key.topicRootId,
-			key.monoforumPeerId,
 			SparseIdsMergedSlice::PartKey(key),
 			limitBefore,
 			limitAfter
@@ -399,7 +395,7 @@ rpl::producer<SparseIdsMergedSlice> SparseIdsMergedSlice::CreateViewer(
 		if (!key.migratedPeerId) {
 			return std::move(
 				partViewer
-			) | rpl::on_next([=](SparseIdsSlice &&part) {
+			) | rpl::start_with_next([=](SparseIdsSlice &&part) {
 				consumer.put_next(SparseIdsMergedSlice(
 					key,
 					std::move(part),
@@ -409,14 +405,13 @@ rpl::producer<SparseIdsMergedSlice> SparseIdsMergedSlice::CreateViewer(
 		auto migratedViewer = simpleViewer(
 			key.migratedPeerId,
 			MsgId(0), // topicRootId
-			PeerId(0), // monoforumPeerId
 			SparseIdsMergedSlice::MigratedKey(key),
 			limitBefore,
 			limitAfter);
 		return rpl::combine(
 			std::move(partViewer),
 			std::move(migratedViewer)
-		) | rpl::on_next([=](
+		) | rpl::start_with_next([=](
 				SparseIdsSlice &&part,
 				SparseIdsSlice &&migrated) {
 			consumer.put_next(SparseIdsMergedSlice(

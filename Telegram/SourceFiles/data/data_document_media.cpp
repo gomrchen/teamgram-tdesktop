@@ -358,10 +358,10 @@ float64 DocumentMedia::progress() const {
 		: (loaded() ? 1. : 0.);
 }
 
-bool DocumentMedia::canBePlayed() const {
+bool DocumentMedia::canBePlayed(HistoryItem *item) const {
 	return !_owner->inappPlaybackFailed()
 		&& _owner->useStreamingLoader()
-		&& (loaded() || _owner->canBeStreamed());
+		&& (loaded() || _owner->canBeStreamed(item));
 }
 
 bool DocumentMedia::thumbnailEnoughForSticker() const {
@@ -431,7 +431,7 @@ void DocumentMedia::GenerateGoodThumbnail(
 		document->setGoodThumbnailChecked(false);
 		return;
 	}
-	const auto guard = base::make_weak(&document->session());
+	const auto guard = base::make_weak(&document->owner().session());
 	crl::async([=, location = std::move(location)] {
 		const auto filepath = (location && location->accessEnable())
 			? location->name()

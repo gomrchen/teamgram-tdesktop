@@ -142,7 +142,7 @@ void Track::fillFromFile(const QString &filePath) {
 	}
 }
 
-void Track::playWithLooping(bool looping, float64 volumeOverride) {
+void Track::playWithLooping(bool looping) {
 	_active = true;
 	if (failed() || _samples.empty()) {
 		finish();
@@ -152,12 +152,7 @@ void Track::playWithLooping(bool looping, float64 volumeOverride) {
 	alSourceStop(_alSource);
 	_looping = looping;
 	alSourcei(_alSource, AL_LOOPING, _looping ? 1 : 0);
-	alSourcef(
-		_alSource,
-		AL_GAIN,
-		(volumeOverride > 0)
-			? volumeOverride
-			: float64(Core::App().settings().notificationsVolume()) / 100.);
+	alSourcef(_alSource, AL_GAIN, _volume);
 	alSourcePlay(_alSource);
 	_instance->trackStarted(this);
 }
@@ -278,7 +273,7 @@ Instance::Instance()
 	});
 
 	_playbackDeviceId.changes(
-	) | rpl::on_next([=](Webrtc::DeviceResolvedId id) {
+	) | rpl::start_with_next([=](Webrtc::DeviceResolvedId id) {
 		if (Player::internal::DetachIfDeviceChanged(this, id)) {
 			_detachFromDeviceForce = false;
 		}

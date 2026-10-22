@@ -75,12 +75,16 @@ using RightsMap = std::vector<std::pair<ChatAdminRight, tr::phrase<>>>;
 	using Flag = ChatAdminRight;
 	return {
 		{ Flag::ChangeInfo, tr::lng_request_group_change_info },
-		{ Flag::DeleteMessages, tr::lng_request_group_delete_messages },
+		{
+			Flag::DeleteMessages,
+			tr::lng_request_group_delete_messages },
 		{ Flag::BanUsers, tr::lng_request_group_ban_users },
 		{ Flag::InviteByLinkOrAdd, tr::lng_request_group_invite },
 		{ Flag::PinMessages, tr::lng_request_group_pin_messages },
 		{ Flag::ManageTopics, tr::lng_request_group_manage_topics },
-		{ Flag::ManageCall, tr::lng_request_group_manage_video_chats },
+		{
+			Flag::ManageCall,
+			tr::lng_request_group_manage_video_chats },
 		{ Flag::Anonymous, tr::lng_request_group_anonymous },
 		{ Flag::AddAdmins, tr::lng_request_group_add_admins },
 	};
@@ -90,14 +94,22 @@ using RightsMap = std::vector<std::pair<ChatAdminRight, tr::phrase<>>>;
 	using Flag = ChatAdminRight;
 	return {
 		{ Flag::ChangeInfo, tr::lng_request_channel_change_info },
-		{ Flag::PostMessages, tr::lng_request_channel_post_messages },
-		{ Flag::EditMessages, tr::lng_request_channel_edit_messages },
-		{ Flag::DeleteMessages, tr::lng_request_channel_delete_messages },
-		{ Flag::InviteByLinkOrAdd, tr::lng_request_channel_add_subscribers },
-		{ Flag::ManageCall, tr::lng_request_channel_manage_livestreams },
-		{ Flag::ManageDirect, tr::lng_request_channel_manage_direct },
+		{
+			Flag::PostMessages,
+			tr::lng_request_channel_post_messages },
+		{
+			Flag::EditMessages,
+			tr::lng_request_channel_edit_messages },
+		{
+			Flag::DeleteMessages,
+			tr::lng_request_channel_delete_messages },
+		{
+			Flag::InviteByLinkOrAdd,
+			tr::lng_request_channel_add_subscribers },
+		{
+			Flag::ManageCall,
+			tr::lng_request_channel_manage_livestreams },
 		{ Flag::AddAdmins, tr::lng_request_channel_add_admins },
-		{ Flag::BanUsers, tr::lng_request_group_ban_users },
 	};
 }
 
@@ -202,10 +214,10 @@ object_ptr<Ui::BoxContent> MakeConfirmBox(
 	auto text = tr::lng_request_peer_confirm(
 		tr::now,
 		lt_chat,
-		tr::bold(name),
+		Ui::Text::Bold(name),
 		lt_bot,
-		tr::bold(botName),
-		tr::marked);
+		Ui::Text::Bold(botName),
+		Ui::Text::WithEntities);
 	if (!peer->isUser()) {
 		const auto rights = peer->isBroadcast()
 			? BroadcastRightsText(query.botRights)
@@ -215,12 +227,12 @@ object_ptr<Ui::BoxContent> MakeConfirmBox(
 				tr::lng_request_peer_confirm_rights(
 					tr::now,
 					lt_bot,
-					tr::bold(botName),
+					Ui::Text::Bold(botName),
 					lt_chat,
-					tr::bold(name),
+					Ui::Text::Bold(name),
 					lt_rights,
 					TextWithEntities{ rights },
-					tr::marked));
+					Ui::Text::WithEntities));
 		} else if (!peer->isBroadcast() && query.isBotParticipant) {
 			const auto common = bot->session().api().botCommonGroups(bot);
 			if (!common || !ranges::contains(*common, peer)) {
@@ -228,10 +240,10 @@ object_ptr<Ui::BoxContent> MakeConfirmBox(
 					tr::lng_request_peer_confirm_add(
 						tr::now,
 						lt_bot,
-						tr::bold(botName),
+						Ui::Text::Bold(botName),
 						lt_chat,
-						tr::bold(name),
-						tr::marked));
+						Ui::Text::Bold(name),
+						Ui::Text::WithEntities));
 			}
 		}
 	}
@@ -247,10 +259,10 @@ object_ptr<Ui::BoxContent> CreatePeerByQueryBox(
 		not_null<UserData*> bot,
 		RequestPeerQuery query,
 		Fn<void(std::vector<not_null<PeerData*>>)> done) {
-	const auto weak = std::make_shared<base::weak_qptr<Ui::BoxContent>>();
+	const auto weak = std::make_shared<QPointer<Ui::BoxContent>>();
 	auto callback = [=](not_null<PeerData*> peer) {
 		done({ peer });
-		if (const auto strong = weak->get()) {
+		if (const auto strong = weak->data()) {
 			strong->closeBox();
 		}
 	};
@@ -352,7 +364,7 @@ void ChoosePeerBoxController::prepareRestrictions() {
 			tr::lng_request_peer_requirements(),
 			{ 0, st::membersMarginTop, 0, 0 });
 		const auto skip = st::defaultSubsectionTitlePadding.left();
-		auto separator = '\n' + Ui::kQBullet + ' ';
+		auto separator = QString::fromUtf8("\n\xE2\x80\xA2 ");
 		raw->add(
 			object_ptr<Ui::FlatLabel>(
 				raw,
@@ -373,7 +385,7 @@ void ChoosePeerBoxController::prepareRestrictions() {
 			st,
 			QPoint());
 		button->heightValue(
-		) | rpl::on_next([=](int height) {
+		) | rpl::start_with_next([=](int height) {
 			icon->moveToLeft(
 				st::choosePeerCreateIconLeft,
 				(height - st::inviteViaLinkIcon.height()) / 2);
@@ -387,7 +399,7 @@ void ChoosePeerBoxController::prepareRestrictions() {
 		button->events(
 		) | rpl::filter([=](not_null<QEvent*> e) {
 			return (e->type() == QEvent::Enter);
-		}) | rpl::on_next([=] {
+		}) | rpl::start_with_next([=] {
 			delegate()->peerListMouseLeftGeometry();
 		}, button->lifetime());
 		return button;
@@ -441,7 +453,7 @@ void ChoosePeerBoxController::rowClicked(not_null<PeerListRow*> row) {
 		const auto onstack = callback;
 		onstack({ peer });
 	};
-	if (peer->isUser()) {
+	if (const auto user = peer->asUser()) {
 		done();
 	} else {
 		delegate()->peerListUiShow()->showBox(
@@ -507,11 +519,11 @@ void ShowChoosePeerBox(
 		});
 		return;
 	}
-	const auto weak = std::make_shared<base::weak_qptr<Ui::BoxContent>>();
+	const auto weak = std::make_shared<QPointer<Ui::BoxContent>>();
 	auto callback = [=, done = std::move(chosen)](
 			std::vector<not_null<PeerData*>> peers) {
 		done(std::move(peers));
-		if (const auto strong = weak->get()) {
+		if (const auto strong = weak->data()) {
 			strong->closeBox();
 		}
 	};
@@ -522,7 +534,7 @@ void ShowChoosePeerBox(
 		query,
 		std::move(callback));
 	auto initBox = [=, ptr = controller.get()](not_null<PeerListBox*> box) {
-		ptr->selectedCountValue() | rpl::on_next([=](int count) {
+		ptr->selectedCountValue() | rpl::start_with_next([=](int count) {
 			box->clearButtons();
 			if (limit > 1) {
 				box->setAdditionalTitle(rpl::single(u"%1 / %2"_q.arg(count).arg(limit)));

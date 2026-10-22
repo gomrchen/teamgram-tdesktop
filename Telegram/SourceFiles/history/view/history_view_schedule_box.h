@@ -23,13 +23,6 @@ namespace SendMenu {
 struct Details;
 } // namespace SendMenu
 
-namespace HistoryView::details {
-
-[[nodiscard]] not_null<Main::Session*> SessionFromShow(
-	const std::shared_ptr<ChatHelpers::Show> &show);
-
-} // namespace HistoryView::details
-
 namespace HistoryView {
 
 [[nodiscard]] TimeId DefaultScheduleTime();
@@ -44,8 +37,7 @@ struct ScheduleBoxStyleArgs {
 
 void ScheduleBox(
 	not_null<Ui::GenericBox*> box,
-	not_null<Main::Session*> session,
-	std::shared_ptr<ChatHelpers::Show> maybeShow,
+	std::shared_ptr<ChatHelpers::Show> show,
 	const Api::SendOptions &initialOptions,
 	const SendMenu::Details &details,
 	Fn<void(Api::SendOptions)> done,
@@ -61,31 +53,9 @@ template <typename Guard, typename Submit>
 		const Api::SendOptions &initialOptions = {},
 		TimeId scheduleTime = DefaultScheduleTime(),
 		ScheduleBoxStyleArgs style = ScheduleBoxStyleArgs()) {
-	const auto session = details::SessionFromShow(show);
 	return Box(
 		ScheduleBox,
-		session,
 		std::move(show),
-		initialOptions,
-		details,
-		crl::guard(std::forward<Guard>(guard), std::forward<Submit>(submit)),
-		scheduleTime,
-		std::move(style));
-}
-
-template <typename Guard, typename Submit>
-[[nodiscard]] object_ptr<Ui::GenericBox> PrepareScheduleBox(
-		Guard &&guard,
-		not_null<Main::Session*> session,
-		const SendMenu::Details &details,
-		Submit &&submit,
-		const Api::SendOptions &initialOptions = {},
-		TimeId scheduleTime = DefaultScheduleTime(),
-		ScheduleBoxStyleArgs style = ScheduleBoxStyleArgs()) {
-	return Box(
-		ScheduleBox,
-		session,
-		nullptr,
 		initialOptions,
 		details,
 		crl::guard(std::forward<Guard>(guard), std::forward<Submit>(submit)),

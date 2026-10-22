@@ -69,15 +69,12 @@ int Birthday::year() const {
 	return _value / 10000;
 }
 
-QString BirthdayText(Birthday date, bool fullMonth) {
-	const auto wrapMonth = fullMonth
-		? Lang::MonthDay
-		: Lang::MonthSmall;
+QString BirthdayText(Birthday date) {
 	if (const auto year = date.year()) {
 		return tr::lng_month_day_year(
 			tr::now,
 			lt_month,
-			wrapMonth(date.month())(tr::now),
+			Lang::MonthSmall(date.month())(tr::now),
 			lt_day,
 			QString::number(date.day()),
 			lt_year,
@@ -86,7 +83,7 @@ QString BirthdayText(Birthday date, bool fullMonth) {
 		return tr::lng_month_day(
 			tr::now,
 			lt_month,
-			wrapMonth(date.month())(tr::now),
+			Lang::MonthSmall(date.month())(tr::now),
 			lt_day,
 			QString::number(date.day()));
 	}

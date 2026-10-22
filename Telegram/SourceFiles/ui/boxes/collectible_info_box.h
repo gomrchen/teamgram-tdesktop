@@ -32,6 +32,14 @@ struct CollectibleInfo {
 	TimeId date = 0;
 };
 
-void CollectibleInfoBox(not_null<Ui::GenericBox*> box, CollectibleInfo info);
+struct CollectibleDetails {
+	TextWithEntities tonEmoji;
+	Text::MarkedContext tonEmojiContext;
+};
+
+void CollectibleInfoBox(
+	not_null<Ui::GenericBox*> box,
+	CollectibleInfo info,
+	CollectibleDetails details);
 
 } // namespace Ui

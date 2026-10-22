@@ -51,47 +51,40 @@ std::vector<ChatParticipant> ParseList(
 void ApplyMegagroupAdmins(not_null<ChannelData*> channel, Members list) {
 	Expects(channel->isMegagroup());
 
-	const auto creatorIt = ranges::find_if(
-		list,
-		&Api::ChatParticipant::isCreator);
+	const auto i = ranges::find_if(list, &Api::ChatParticipant::isCreator);
+	if (i != list.end()) {
+		i->tryApplyCreatorTo(channel);
+	} else {
+		channel->mgInfo->creator = nullptr;
+		channel->mgInfo->creatorRank = QString();
+	}
 
-	auto adding = base::flat_set<UserId>();
-	auto addingRanks = base::flat_map<UserId, QString>();
+	auto adding = base::flat_map<UserId, QString>();
 	for (const auto &p : list) {
 		if (p.isUser()) {
-			adding.emplace(p.userId());
-			if (!p.rank().isEmpty()) {
-				addingRanks.emplace(p.userId(), p.rank());
-			}
+			adding.emplace(p.userId(), p.rank());
 		}
 	}
-	if (creatorIt != list.end() && creatorIt->isUser()) {
-		adding.emplace(creatorIt->userId());
-		if (!creatorIt->rank().isEmpty()) {
-			addingRanks.emplace(creatorIt->userId(), creatorIt->rank());
-		}
+	if (channel->mgInfo->creator) {
+		adding.emplace(
+			peerToUser(channel->mgInfo->creator->id),
+			channel->mgInfo->creatorRank);
 	}
 	auto removing = channel->mgInfo->admins;
 	if (removing.empty() && adding.empty()) {
+		// Add some admin-placeholder so we don't DDOS
+		// server with admins list requests.
 		LOG(("API Error: Got empty admins list from server."));
-		adding.emplace(UserId(0));
+		adding.emplace(0, QString());
 	}
 
 	Data::ChannelAdminChanges changes(channel);
-	if (creatorIt != list.end()) {
-		creatorIt->tryApplyCreatorTo(channel);
-	} else {
-		channel->mgInfo->creator = nullptr;
+	for (const auto &[addingId, rank] : adding) {
+		if (!removing.remove(addingId)) {
+			changes.add(addingId, rank);
+		}
 	}
-	for (const auto &addingId : adding) {
-		const auto r = addingRanks.find(addingId);
-		const auto rank = (r != end(addingRanks))
-			? r->second
-			: QString();
-		removing.remove(addingId);
-		changes.add(addingId, rank);
-	}
-	for (const auto &removingId : removing) {
+	for (const auto &[removingId, rank] : removing) {
 		changes.remove(removingId);
 	}
 }
@@ -119,7 +112,6 @@ void ApplyLastList(
 	channel->mgInfo->lastAdmins.clear();
 	channel->mgInfo->lastRestricted.clear();
 	channel->mgInfo->lastParticipants.clear();
-	channel->mgInfo->memberRanks.clear();
 	channel->mgInfo->lastParticipantsStatus
 		= MegagroupInfo::LastParticipantsUpToDate
 			| MegagroupInfo::LastParticipantsOnceReceived;
@@ -155,9 +147,6 @@ void ApplyLastList(
 					&& (channel->mgInfo->botStatus < 2)) {
 					channel->mgInfo->botStatus = 2;
 				}
-			}
-			if (!p.rank().isEmpty()) {
-				channel->mgInfo->memberRanks[p.userId()] = p.rank();
 			}
 		}
 	}
@@ -298,14 +287,12 @@ ChatParticipant::ChatParticipant(
 		_type = Type::Member;
 		_date = data.vdate().v;
 		_by = peerToUser(peerFromUser(data.vinviter_id()));
-		_rank = qs(data.vrank().value_or_empty());
 		if (data.vsubscription_until_date()) {
 			_subscriptionDate = data.vsubscription_until_date()->v;
 		}
 	}, [&](const MTPDchannelParticipant &data) {
 		_type = Type::Member;
 		_date = data.vdate().v;
-		_rank = qs(data.vrank().value_or_empty());
 		if (data.vsubscription_until_date()) {
 			_subscriptionDate = data.vsubscription_until_date()->v;
 		}
@@ -313,7 +300,6 @@ ChatParticipant::ChatParticipant(
 		_restrictions = ChatRestrictionsInfo(data.vbanned_rights());
 		_by = peerToUser(peerFromUser(data.vkicked_by()));
 		_date = data.vdate().v;
-		_rank = qs(data.vrank().value_or_empty());
 
 		_type = (_restrictions.flags & ChatRestriction::ViewMessages)
 			? Type::Banned
@@ -345,11 +331,7 @@ void ChatParticipant::tryApplyCreatorTo(
 	if (isCreator() && isUser()) {
 		if (const auto info = channel->mgInfo.get()) {
 			info->creator = channel->owner().userLoaded(userId());
-			if (!rank().isEmpty()) {
-				info->memberRanks[userId()] = rank();
-			} else {
-				info->memberRanks.remove(userId());
-			}
+			info->creatorRank = rank();
 		}
 	}
 }
@@ -440,7 +422,7 @@ void ChatParticipants::requestForAdd(
 
 	_forAdd.channel = channel;
 	_forAdd.requestId = _api.request(MTPchannels_GetParticipants(
-		channel->inputChannel(),
+		channel->inputChannel,
 		MTP_channelParticipantsRecent(),
 		MTP_int(offset),
 		MTP_int(channel->session().serverConfig().chatSizeMax),
@@ -468,7 +450,7 @@ void ChatParticipants::requestLast(not_null<ChannelData*> channel) {
 	const auto offset = 0;
 	const auto participantsHash = uint64(0);
 	const auto requestId = _api.request(MTPchannels_GetParticipants(
-		channel->inputChannel(),
+		channel->inputChannel,
 		MTP_channelParticipantsRecent(),
 		MTP_int(offset),
 		MTP_int(channel->session().serverConfig().chatSizeMax),
@@ -498,7 +480,7 @@ void ChatParticipants::requestBots(not_null<ChannelData*> channel) {
 	const auto offset = 0;
 	const auto participantsHash = uint64(0);
 	const auto requestId = _api.request(MTPchannels_GetParticipants(
-		channel->inputChannel(),
+		channel->inputChannel,
 		MTP_channelParticipantsBots(),
 		MTP_int(offset),
 		MTP_int(channel->session().serverConfig().chatSizeMax),
@@ -512,15 +494,8 @@ void ChatParticipants::requestBots(not_null<ChannelData*> channel) {
 			LOG(("API Error: "
 				"channels.channelParticipantsNotModified received!"));
 		});
-	}).fail([=](const MTP::Error &error) {
+	}).fail([=] {
 		_botsRequests.remove(channel);
-		if (error.type() == u"CHANNEL_MONOFORUM_UNSUPPORTED"_q) {
-			channel->mgInfo->bots.clear();
-			channel->mgInfo->botStatus = -1;
-			channel->session().changes().peerUpdated(
-				channel,
-				Data::PeerUpdate::Flag::FullInfo);
-		}
 	}).send();
 
 	_botsRequests[channel] = requestId;
@@ -534,7 +509,7 @@ void ChatParticipants::requestAdmins(not_null<ChannelData*> channel) {
 	const auto offset = 0;
 	const auto participantsHash = uint64(0);
 	const auto requestId = _api.request(MTPchannels_GetParticipants(
-		channel->inputChannel(),
+		channel->inputChannel,
 		MTP_channelParticipantsAdmins(),
 		MTP_int(offset),
 		MTP_int(channel->session().serverConfig().chatSizeMax),
@@ -573,8 +548,8 @@ void ChatParticipants::add(
 	if (const auto chat = peer->asChat()) {
 		for (const auto &user : users) {
 			_api.request(MTPmessages_AddChatUser(
-				chat->inputChat(),
-				user->inputUser(),
+				chat->inputChat,
+				user->inputUser,
 				MTP_int(passGroupHistory ? kForwardMessagesOnAdd : 0)
 			)).done([=](const MTPmessages_InvitedUsers &result) {
 				const auto &data = result.data();
@@ -605,7 +580,7 @@ void ChatParticipants::add(
 		const auto send = [&] {
 			const auto callback = base::take(done);
 			_api.request(MTPchannels_InviteToChannel(
-				channel->inputChannel(),
+				channel->inputChannel,
 				MTP_vector<MTPInputUser>(list)
 			)).done([=](const MTPmessages_InvitedUsers &result) {
 				const auto &data = result.data();
@@ -624,7 +599,7 @@ void ChatParticipants::add(
 			}).afterDelay(kSmallDelayMs).send();
 		};
 		for (const auto &user : users) {
-			list.push_back(user->inputUser());
+			list.push_back(user->inputUser);
 			if (list.size() == kMaxUsersPerInvite) {
 				send();
 				list.clear();
@@ -669,20 +644,23 @@ void ChatParticipants::Restrict(
 		ChatRestrictionsInfo oldRights,
 		ChatRestrictionsInfo newRights,
 		Fn<void()> onDone,
-		Fn<void(const QString&)> onFail) {
+		Fn<void()> onFail) {
 	channel->session().api().request(MTPchannels_EditBanned(
-		channel->inputChannel(),
-		participant->input(),
-		RestrictionsToMTP(newRights)
+		channel->inputChannel,
+		participant->input,
+		MTP_chatBannedRights(
+			MTP_flags(MTPDchatBannedRights::Flags::from_raw(
+				uint32(newRights.flags))),
+			MTP_int(newRights.until))
 	)).done([=](const MTPUpdates &result) {
 		channel->session().api().applyUpdates(result);
 		channel->applyEditBanned(participant, oldRights, newRights);
 		if (onDone) {
 			onDone();
 		}
-	}).fail([=](const MTP::Error &error) {
+	}).fail([=] {
 		if (onFail) {
-			onFail(error.type());
+			onFail();
 		}
 	}).send();
 }
@@ -710,7 +688,7 @@ void ChatParticipants::requestSelf(not_null<ChannelData*> channel) {
 	};
 	_selfParticipantRequests.emplace(channel);
 	_api.request(MTPchannels_GetParticipant(
-		channel->inputChannel(),
+		channel->inputChannel,
 		MTP_inputPeerSelf()
 	)).done([=](const MTPchannels_ChannelParticipant &result) {
 		_selfParticipantRequests.erase(channel);
@@ -760,8 +738,8 @@ void ChatParticipants::kick(
 
 	_api.request(MTPmessages_DeleteChatUser(
 		MTP_flags(0),
-		chat->inputChat(),
-		participant->asUser()->inputUser()
+		chat->inputChat,
+		participant->asUser()->inputUser
 	)).done([=](const MTPUpdates &result) {
 		chat->session().api().applyUpdates(result);
 	}).send();
@@ -776,9 +754,12 @@ void ChatParticipants::kick(
 
 	const auto rights = ChannelData::KickedRestrictedRights(participant);
 	const auto requestId = _api.request(MTPchannels_EditBanned(
-		channel->inputChannel(),
-		participant->input(),
-		RestrictionsToMTP(rights)
+		channel->inputChannel,
+		participant->input,
+		MTP_chatBannedRights(
+			MTP_flags(
+				MTPDchatBannedRights::Flags::from_raw(uint32(rights.flags))),
+			MTP_int(rights.until))
 	)).done([=](const MTPUpdates &result) {
 		channel->session().api().applyUpdates(result);
 
@@ -800,8 +781,8 @@ void ChatParticipants::unblock(
 	}
 
 	const auto requestId = _api.request(MTPchannels_EditBanned(
-		channel->inputChannel(),
-		participant->input(),
+		channel->inputChannel,
+		participant->input,
 		MTP_chatBannedRights(MTP_flags(0), MTP_int(0))
 	)).done([=](const MTPUpdates &result) {
 		channel->session().api().applyUpdates(result);
@@ -832,7 +813,7 @@ void ChatParticipants::loadSimilarPeers(not_null<PeerData*> peer) {
 		_similar[peer].requestId = _api.request(
 			MTPchannels_GetChannelRecommendations(
 				MTP_flags(Flag::f_channel),
-				channel->inputChannel())
+				channel->inputChannel)
 		).done([=](const MTPmessages_Chats &result) {
 			auto &similar = _similar[channel];
 			similar.requestId = 0;
@@ -850,7 +831,7 @@ void ChatParticipants::loadSimilarPeers(not_null<PeerData*> peer) {
 		}).send();
 	} else if (const auto bot = peer->asBot()) {
 		_similar[peer].requestId = _api.request(
-			MTPbots_GetBotRecommendations(bot->inputUser())
+			MTPbots_GetBotRecommendations(bot->inputUser)
 		).done([=](const MTPusers_Users &result) {
 			auto &similar = _similar[peer];
 			similar.requestId = 0;

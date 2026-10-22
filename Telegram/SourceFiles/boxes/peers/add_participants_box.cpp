@@ -29,7 +29,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/boxes/confirm_box.h"
 #include "ui/boxes/show_or_premium_box.h"
 #include "ui/effects/premium_graphics.h"
-#include "ui/text/text_utilities.h" // tr::rich
+#include "ui/text/text_utilities.h" // Ui::Text::RichLangValue
 #include "ui/toast/toast.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/checkbox.h"
@@ -39,7 +39,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/unixtime.h"
 #include "main/main_session.h"
 #include "mtproto/mtproto_config.h"
-#include "settings/sections/settings_premium.h"
+#include "settings/settings_premium.h"
 #include "window/window_session_controller.h"
 #include "info/profile/info_profile_icon.h"
 #include "apiwrap.h"
@@ -179,7 +179,6 @@ void FillUpgradeToPremiumCover(
 		CreateUserpicsWithMoreBadge(
 			container,
 			rpl::single(std::move(userpicPeers)),
-			st::boostReplaceUserpicsRow,
 			kUserpicsLimit),
 		st::inviteForbiddenUserpicsPadding)
 	)->entity()->setAttribute(Qt::WA_TransparentForMouseEvents);
@@ -191,17 +190,17 @@ void FillUpgradeToPremiumCover(
 	for (auto i = 0; i != names; ++i) {
 		const auto name = userpicUsers[i]->shortName();
 		if (text.empty()) {
-			text = tr::bold(name);
+			text = Ui::Text::Bold(name);
 		} else if (i == names - 1 && !remaining) {
 			text = tr::lng_invite_upgrade_users_few(
 				tr::now,
 				lt_users,
 				text,
 				lt_last,
-				tr::bold(name),
-				tr::rich);
+				Ui::Text::Bold(name),
+				Ui::Text::RichLangValue);
 		} else {
-			text.append(", ").append(tr::bold(name));
+			text.append(", ").append(Ui::Text::Bold(name));
 		}
 	}
 	if (remaining > 0) {
@@ -211,7 +210,7 @@ void FillUpgradeToPremiumCover(
 			remaining,
 			lt_users,
 			text,
-			tr::rich);
+			Ui::Text::RichLangValue);
 	}
 	const auto inviteOnly = !forbidden.premiumAllowsInvite.empty()
 		&& (forbidden.premiumAllowsWrite.size() != forbidden.users.size());
@@ -227,14 +226,13 @@ void FillUpgradeToPremiumCover(
 				int(userpicUsers.size()),
 				lt_users,
 				text,
-				tr::rich);
+				Ui::Text::RichLangValue);
 	container->add(
 		object_ptr<Ui::FlatLabel>(
 			container,
 			rpl::single(text),
 			st::inviteForbiddenInfo),
-		st::inviteForbiddenInfoPadding,
-		style::al_top);
+		st::inviteForbiddenInfoPadding);
 }
 
 void SimpleForbiddenBox(
@@ -273,7 +271,7 @@ void SimpleForbiddenBox(
 
 	Data::AmPremiumValue(
 		&peer->session()
-	) | rpl::skip(1) | rpl::on_next([=] {
+	) | rpl::skip(1) | rpl::start_with_next([=] {
 		box->closeBox();
 	}, box->lifetime());
 }
@@ -474,11 +472,11 @@ void InviteForbiddenController::setSimpleCover() {
 		? phraseCounted(
 			lt_count,
 			rpl::single<float64>(count),
-			tr::rich)
+			Ui::Text::RichLangValue)
 		: phraseNamed(
 			lt_user,
 			rpl::single(TextWithEntities{ _users.front()->name() }),
-			tr::rich);
+			Ui::Text::RichLangValue);
 	delegate()->peerListSetAboveWidget(object_ptr<Ui::PaddingWrap<>>(
 		(QWidget*)nullptr,
 		object_ptr<Ui::FlatLabel>(
@@ -512,8 +510,7 @@ void InviteForbiddenController::setComplexCover() {
 		if (_can) {
 			container->add(
 				MakeShowOrLabel(container, tr::lng_invite_upgrade_or()),
-				st::inviteForbiddenOrLabelPadding,
-				style::al_justify);
+				st::inviteForbiddenOrLabelPadding);
 		}
 		container->add(
 			object_ptr<Ui::FlatLabel>(
@@ -522,40 +519,38 @@ void InviteForbiddenController::setComplexCover() {
 					? tr::lng_invite_upgrade_via_title()
 					: tr::lng_via_link_cant()),
 				st::inviteForbiddenTitle),
-			st::inviteForbiddenTitlePadding,
-			style::al_top);
+			st::inviteForbiddenTitlePadding);
 
 		const auto about = _can
 			? (_peer->isBroadcast()
 				? tr::lng_invite_upgrade_via_channel_about
 				: tr::lng_invite_upgrade_via_group_about)(
 					tr::now,
-					tr::marked)
+					Ui::Text::WithEntities)
 			: (_forbidden.users.size() == 1
 				? tr::lng_via_link_cant_one(
 					tr::now,
 					lt_user,
 					TextWithEntities{ _forbidden.users.front()->shortName() },
-					tr::rich)
+					Ui::Text::RichLangValue)
 				: tr::lng_via_link_cant_many(
 					tr::now,
 					lt_count,
 					int(_forbidden.users.size()),
-					tr::rich));
+					Ui::Text::RichLangValue));
 		container->add(
 			object_ptr<Ui::FlatLabel>(
 				container,
 				rpl::single(about),
 				st::inviteForbiddenInfo),
-			st::inviteForbiddenInfoPadding,
-			style::al_top);
+			st::inviteForbiddenInfoPadding);
 	}
 	delegate()->peerListSetAboveWidget(std::move(cover));
 }
 
 void InviteForbiddenController::prepare() {
 	session().api().premium().someMessageMoneyRestrictionsResolved(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		auto stars = 0;
 		const auto process = [&](not_null<PeerListRow*> raw) {
 			const auto row = static_cast<ForbiddenRow*>(raw.get());
@@ -667,7 +662,7 @@ void InviteForbiddenController::send(
 	if (!waiting.empty()) {
 		session().changes().peerUpdates(
 			Data::PeerUpdate::Flag::FullInfo
-		) | rpl::on_next([=](const Data::PeerUpdate &update) {
+		) | rpl::start_with_next([=](const Data::PeerUpdate &update) {
 			if (waiting.contains(update.peer)) {
 				withPaymentApproved(alreadyApproved);
 			}
@@ -677,7 +672,7 @@ void InviteForbiddenController::send(
 			session().credits().loadedValue(
 			) | rpl::filter(
 				rpl::mappers::_1
-			) | rpl::take(1) | rpl::on_next([=] {
+			) | rpl::take(1) | rpl::start_with_next([=] {
 				withPaymentApproved(alreadyApproved);
 			}, _paymentCheckLifetime);
 		}
@@ -721,12 +716,12 @@ void InviteForbiddenController::send(
 				tr::now,
 				lt_user,
 				TextWithEntities{ list.front()->name() },
-				tr::rich)
+				Ui::Text::RichLangValue)
 			: tr::lng_via_link_shared_many(
 				tr::now,
 				lt_count,
 				int(list.size()),
-				tr::rich);
+				Ui::Text::RichLangValue);
 		close();
 		show->showToast(std::move(text));
 		return true;
@@ -750,7 +745,7 @@ void InviteForbiddenController::send(
 		_peer->session().changes().peerUpdates(
 			_peer,
 			Data::PeerUpdate::Flag::FullInfo
-		) | rpl::on_next([=] {
+		) | rpl::start_with_next([=] {
 			sendForFull();
 		}, lifetime());
 	}
@@ -813,7 +808,7 @@ void AddParticipantsBoxController::rowClicked(not_null<PeerListRow*> row) {
 		updateTitle();
 	} else if (const auto channel = _peer ? _peer->asChannel() : nullptr) {
 		if (!_peer->isMegagroup()) {
-			showBox(Box<MaxInviteBox>(channel));
+			showBox(Box<MaxInviteBox>(_peer->asChannel()));
 		}
 	} else if (count >= serverConfig.chatSizeMax
 		&& count < serverConfig.megagroupSizeMax) {
@@ -902,9 +897,9 @@ bool AddParticipantsBoxController::needsInviteLinkButton() {
 	return _peer->asChat()->canHaveInviteLink();
 }
 
-base::weak_qptr<Ui::BoxContent> AddParticipantsBoxController::showBox(
+QPointer<Ui::BoxContent> AddParticipantsBoxController::showBox(
 		object_ptr<Ui::BoxContent> box) const {
-	const auto weak = base::make_weak(box.data());
+	const auto weak = Ui::MakeWeak(box.data());
 	delegate()->peerListUiShow()->showBox(std::move(box));
 	return weak;
 }
@@ -926,7 +921,7 @@ void AddParticipantsBoxController::addInviteLinkButton() {
 		st::inviteViaLinkIcon,
 		QPoint());
 	button->entity()->heightValue(
-	) | rpl::on_next([=](int height) {
+	) | rpl::start_with_next([=](int height) {
 		icon->moveToLeft(
 			st::inviteViaLinkIconPosition.x(),
 			(height - st::inviteViaLinkIcon.height()) / 2);
@@ -938,7 +933,7 @@ void AddParticipantsBoxController::addInviteLinkButton() {
 	button->entity()->events(
 	) | rpl::filter([=](not_null<QEvent*> e) {
 		return (e->type() == QEvent::Enter);
-	}) | rpl::on_next([=] {
+	}) | rpl::start_with_next([=] {
 		delegate()->peerListMouseLeftGeometry();
 	}, button->lifetime());
 	delegate()->peerListSetAboveWidget(std::move(button));
@@ -980,7 +975,7 @@ void AddParticipantsBoxController::inviteSelectedUsers(
 			tr::lng_participant_invite_history(),
 			true,
 			st::defaultBoxCheckbox);
-		const auto weak = base::make_weak(checkbox.data());
+		const auto weak = Ui::MakeWeak(checkbox.data());
 
 		auto text = (users.size() == 1)
 			? tr::lng_participant_invite_sure(
@@ -989,14 +984,14 @@ void AddParticipantsBoxController::inviteSelectedUsers(
 				{ users.front()->name()},
 				lt_group,
 				{ _peer->name()},
-				tr::rich)
+				Ui::Text::RichLangValue)
 			: tr::lng_participant_invite_sure_many(
 				tr::now,
 				lt_count,
 				int(users.size()),
 				lt_group,
 				{ _peer->name() },
-				tr::rich);
+				Ui::Text::RichLangValue);
 		Ui::ConfirmBox(box, {
 			.text = std::move(text),
 			.confirmed = crl::guard(weak, [=](Fn<void()> &&close) {
@@ -1062,7 +1057,7 @@ void AddParticipantsBoxController::Start(
 			[=] { box->closeBox(); });
 		if (justCreated) {
 			const auto weak = base::make_weak(parent);
-			box->boxClosing() | rpl::on_next([=] {
+			box->boxClosing() | rpl::start_with_next([=] {
 				auto params = Window::SectionShow();
 				params.activation = anim::activation::background;
 				if (const auto strong = weak.get()) {
@@ -1070,10 +1065,6 @@ void AddParticipantsBoxController::Start(
 						channel,
 						params,
 						ShowAtTheEndMsgId);
-					channel->owner().addRecentJoinChat({
-						.fromPeerId = channel->id,
-						.joinedPeerId = channel->id,
-					});
 				}
 			}, box->lifetime());
 		}
@@ -1145,7 +1136,7 @@ bool ChatInviteForbidden(
 		) | rpl::map(
 			rpl::mappers::_1 > 0
 		) | rpl::distinct_until_changed(
-		) | rpl::on_next([=](bool has) {
+		) | rpl::start_with_next([=](bool has) {
 			box->clearButtons();
 			if (has) {
 				const auto send = box->addButton(tr::lng_via_link_send(), [=] {
@@ -1165,7 +1156,7 @@ bool ChatInviteForbidden(
 
 		Data::AmPremiumValue(
 			&peer->session()
-		) | rpl::skip(1) | rpl::on_next([=] {
+		) | rpl::skip(1) | rpl::start_with_next([=] {
 			box->closeBox();
 		}, box->lifetime());
 	};
@@ -1213,9 +1204,9 @@ void AddSpecialBoxController::migrate(
 	_additional.migrate(chat, channel);
 }
 
-base::weak_qptr<Ui::BoxContent> AddSpecialBoxController::showBox(
+QPointer<Ui::BoxContent> AddSpecialBoxController::showBox(
 		object_ptr<Ui::BoxContent> box) const {
-	const auto weak = base::make_weak(box.data());
+	const auto weak = Ui::MakeWeak(box.data());
 	delegate()->peerListUiShow()->showBox(std::move(box));
 	return weak;
 }
@@ -1272,7 +1263,7 @@ void AddSpecialBoxController::prepareChatRows(not_null<ChatData*> chat) {
 	chat->session().changes().peerUpdates(
 		chat,
 		UpdateFlag::Members | UpdateFlag::Admins
-	) | rpl::on_next([=](const Data::PeerUpdate &update) {
+	) | rpl::start_with_next([=](const Data::PeerUpdate &update) {
 		_additional.fillFromPeer();
 		if (update.flags & UpdateFlag::Members) {
 			rebuildChatRows(chat);
@@ -1330,7 +1321,7 @@ void AddSpecialBoxController::loadMoreRows() {
 	const auto channel = _peer->asChannel();
 
 	_loadRequestId = _api.request(MTPchannels_GetParticipants(
-		channel->inputChannel(),
+		channel->inputChannel,
 		MTP_channelParticipantsRecent(),
 		MTP_int(_offset),
 		MTP_int(perPage),
@@ -1393,8 +1384,8 @@ bool AddSpecialBoxController::checkInfoLoaded(
 	// We don't know what this user status is in the group.
 	const auto channel = _peer->asChannel();
 	_api.request(MTPchannels_GetParticipant(
-		channel->inputChannel(),
-		participant->input()
+		channel->inputChannel,
+		participant->input
 	)).done([=](const MTPchannels_ChannelParticipant &result) {
 		result.match([&](const MTPDchannels_channelParticipant &data) {
 			channel->owner().processUsers(data.vusers());
@@ -1500,14 +1491,14 @@ void AddSpecialBoxController::showAdmin(
 		_peer,
 		user,
 		currentRights,
-		_additional.memberRank(user),
+		_additional.adminRank(user),
 		_additional.adminPromotedSince(user),
 		_additional.adminPromotedBy(user));
 	const auto show = delegate()->peerListUiShow();
 	if (_additional.canAddOrEditAdmin(user)) {
 		const auto done = crl::guard(this, [=](
 				ChatAdminRightsInfo newRights,
-				const std::optional<QString> &rank) {
+				const QString &rank) {
 			editAdminDone(user, newRights, rank);
 		});
 		const auto fail = crl::guard(this, [=] {
@@ -1524,16 +1515,12 @@ void AddSpecialBoxController::showAdmin(
 void AddSpecialBoxController::editAdminDone(
 		not_null<UserData*> user,
 		ChatAdminRightsInfo rights,
-		const std::optional<QString> &rank) {
+		const QString &rank) {
 	if (_editParticipantBox) {
 		_editParticipantBox->closeBox();
 	}
 
-	_additional.applyAdminLocally(
-		user,
-		rights,
-		rank.value_or(_additional.memberRank(user)));
-	// _adminDoneCallback should call changes().chatAdminUpdated.
+	_additional.applyAdminLocally(user, rights, rank);
 	if (const auto callback = _adminDoneCallback) {
 		callback(user, rights, rank);
 	}
@@ -1585,7 +1572,6 @@ void AddSpecialBoxController::showRestricted(
 		user,
 		_additional.adminRights(user).has_value(),
 		currentRights,
-		_additional.memberRank(user),
 		_additional.restrictedBy(user),
 		_additional.restrictedSince(user));
 	if (_additional.canRestrictParticipant(user)) {
@@ -1598,9 +1584,8 @@ void AddSpecialBoxController::showRestricted(
 				_editParticipantBox->closeBox();
 			}
 		});
-		const auto show = delegate()->peerListUiShow();
 		box->setSaveCallback(
-			SaveRestrictedCallback(show, _peer, user, done, fail));
+			SaveRestrictedCallback(_peer, user, done, fail));
 	}
 	_editParticipantBox = showBox(std::move(box));
 }
@@ -1673,9 +1658,7 @@ void AddSpecialBoxController::kickUser(
 	const auto fail = crl::guard(this, [=] {
 		_editBox = nullptr;
 	});
-	const auto show = delegate()->peerListUiShow();
 	const auto callback = SaveRestrictedCallback(
-		show,
 		_peer,
 		participant,
 		done,
@@ -1807,7 +1790,7 @@ void AddSpecialBoxSearchController::requestParticipants() {
 	const auto channel = _peer->asChannel();
 
 	_requestId = _api.request(MTPchannels_GetParticipants(
-		channel->inputChannel(),
+		channel->inputChannel,
 		MTP_channelParticipantsSearch(MTP_string(_query)),
 		MTP_int(_offset),
 		MTP_int(perPage),

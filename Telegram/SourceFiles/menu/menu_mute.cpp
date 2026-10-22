@@ -69,7 +69,7 @@ void IconWithText::paintEvent(QPaintEvent *e) {
 class MuteItem final : public Ui::Menu::Action {
 public:
 	MuteItem(
-		not_null<Ui::Menu::Menu*> parent,
+		not_null<RpWidget*> parent,
 		const style::Menu &st,
 		Descriptor descriptor);
 
@@ -85,7 +85,7 @@ private:
 };
 
 MuteItem::MuteItem(
-	not_null<Ui::Menu::Menu*> parent,
+	not_null<RpWidget*> parent,
 	const style::Menu &st,
 	Descriptor descriptor)
 : Ui::Menu::Action(
@@ -96,7 +96,7 @@ MuteItem::MuteItem(
 	nullptr)
 , _itemIconPosition(st.itemIconPosition) {
 	descriptor.isMutedValue(
-	) | rpl::on_next([=](bool isMuted) {
+	) | rpl::start_with_next([=](bool isMuted) {
 		action()->setText(isMuted
 			? tr::lng_mute_menu_duration_unmute(tr::now)
 			: tr::lng_mute_menu_duration_forever(tr::now));
@@ -113,7 +113,7 @@ MuteItem::MuteItem(
 	}, lifetime());
 	_animation.stop();
 
-	setActionTriggered([=] {
+	setClickedCallback([=] {
 		descriptor.updateMutePeriod(_isMuted ? 0 : kMuteForeverValue);
 	});
 }
@@ -253,7 +253,6 @@ Descriptor ThreadDescriptor(not_null<Data::Thread*> thread) {
 		.currentSound = currentSound,
 		.updateSound = updateSound,
 		.updateMutePeriod = updateMutePeriod,
-		.volumeController = Data::ThreadRingtonesVolumeController(thread),
 	};
 }
 
@@ -291,7 +290,6 @@ Descriptor DefaultDescriptor(
 		.currentSound = currentSound,
 		.updateSound = updateSound,
 		.updateMutePeriod = updateMutePeriod,
-		.volumeController = DefaultRingtonesVolumeController(session, type),
 	};
 }
 
@@ -306,8 +304,7 @@ void FillMuteMenu(
 				RingtonesBox,
 				session,
 				*currentSound,
-				descriptor.updateSound,
-				descriptor.volumeController));
+				descriptor.updateSound));
 		}
 	};
 	menu->addAction(
@@ -340,7 +337,7 @@ void FillMuteMenu(
 		};
 
 		auto item = base::make_unique_q<IconWithText>(
-			menu->menu(),
+			menu,
 			st,
 			Ui::Menu::CreateAction(
 				menu->menu().get(),
@@ -361,25 +358,21 @@ void FillMuteMenu(
 		&st::menuIconMuteFor);
 
 	menu->addAction(
-		base::make_unique_q<MuteItem>(
-			menu->menu(),
-			menu->st().menu,
-			descriptor));
+		base::make_unique_q<MuteItem>(menu, menu->st().menu, descriptor));
 }
 
 void SetupMuteMenu(
 		not_null<Ui::RpWidget*> parent,
 		rpl::producer<> triggers,
 		Fn<std::optional<Descriptor>()> makeDescriptor,
-		std::shared_ptr<Ui::Show> show,
-		Fn<QPoint()> positionCallback) {
+		std::shared_ptr<Ui::Show> show) {
 	struct State {
 		base::unique_qptr<Ui::PopupMenu> menu;
 	};
 	const auto state = parent->lifetime().make_state<State>();
 	std::move(
 		triggers
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		if (state->menu) {
 			return;
 		} else if (const auto descriptor = makeDescriptor()) {
@@ -387,9 +380,7 @@ void SetupMuteMenu(
 				parent,
 				st::popupMenuWithIcons);
 			FillMuteMenu(state->menu.get(), *descriptor, show);
-			state->menu->popup(positionCallback
-				? positionCallback()
-				: QCursor::pos());
+			state->menu->popup(QCursor::pos());
 		}
 	}, parent->lifetime());
 }

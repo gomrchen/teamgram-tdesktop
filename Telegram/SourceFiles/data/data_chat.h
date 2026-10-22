@@ -166,9 +166,9 @@ public:
 	void setAllowedReactions(Data::AllowedReactions value);
 	[[nodiscard]] const Data::AllowedReactions &allowedReactions() const;
 
-	[[nodiscard]] MTPlong inputChat() const;
-
 	// Still public data members.
+	const MTPlong inputChat;
+
 	int count = 0;
 	TimeId date = 0;
 	UserId creator = 0;
@@ -178,7 +178,6 @@ public:
 	base::flat_set<not_null<UserData*>> admins;
 	std::deque<not_null<UserData*>> lastAuthors;
 	base::flat_set<not_null<PeerData*>> markupSenders;
-	base::flat_map<UserId, QString> memberRanks;
 	int botStatus = 0; // -1 - no bots, 0 - unknown, 1 - one bot, that sees all history, 2 - other
 
 private:
@@ -216,9 +215,6 @@ void ApplyChatUpdate(
 void ApplyChatUpdate(
 	not_null<ChatData*> chat,
 	const MTPDupdateChatParticipantAdmin &update);
-void ApplyChatUpdate(
-	not_null<ChatData*> chat,
-	const MTPDupdateChatParticipantRank &update);
 void ApplyChatUpdate(
 	not_null<ChatData*> chat,
 	const MTPDupdateChatDefaultBannedRights &update);

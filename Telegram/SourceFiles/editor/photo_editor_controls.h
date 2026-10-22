@@ -53,7 +53,6 @@ private:
 	void showAnimated(
 		PhotoEditorMode::Mode mode,
 		anim::type animated = anim::type::normal);
-	void updateInputMask();
 
 	int bottomButtonsTop() const;
 

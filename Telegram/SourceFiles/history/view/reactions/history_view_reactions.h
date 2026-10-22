@@ -84,10 +84,6 @@ public:
 	[[nodiscard]] bool getState(
 		QPoint point,
 		not_null<TextState*> outResult) const;
-	void clickHandlerPressedChanged(
-		const ClickHandlerPtr &handler,
-		bool pressed,
-		Fn<void()> repaint);
 
 	void animate(
 		Ui::ReactionFlyAnimationArgs &&args,
@@ -114,7 +110,6 @@ private:
 		bool someNotLoaded = false;
 	};
 	struct Button;
-	struct RippleEffect;
 
 	void layout();
 	void layoutButtons();
@@ -154,9 +149,6 @@ private:
 	mutable QImage _customCache;
 	mutable int _customSkip = 0;
 	bool _hasCustomEmoji = false;
-	mutable std::unique_ptr<RippleEffect> _ripple;
-	mutable QPoint _lastPoint;
-	mutable ReactionId _lastPointButton;
 
 };
 

@@ -110,7 +110,6 @@ namespace {
 
 [[nodiscard]] ProxyData::Status Base64UrlMtprotoPasswordStatus(
 		const QString &password) {
-	// IncorrectSecret
 	const auto inner = Base64UrlInner(password);
 	const auto size = (inner.size() * 3) / 4;
 	const auto valid = (size == 16)
@@ -122,15 +121,10 @@ namespace {
 			&& (password[0] == '7')
 			&& (password[1] >= 'g')
 			&& (password[1] <= 'v'));
-	const auto incorrect = (size >= 21
-		&& password[0].toLower() == 'e'
-		&& password[1].toLower() == 'e');
 	if (size < 16) {
 		return ProxyData::Status::Invalid;
 	} else if (valid) {
 		return ProxyData::Status::Valid;
-	} else if (incorrect) {
-		return ProxyData::Status::IncorrectSecret;
 	}
 	return ProxyData::Status::Unsupported;
 }
@@ -159,7 +153,7 @@ ProxyData::Status ProxyData::status() const {
 }
 
 bool ProxyData::supportsCalls() const {
-	return false;// (type == Type::Socks5);
+	return (type == Type::Socks5);
 }
 
 bool ProxyData::tryCustomResolve() const {

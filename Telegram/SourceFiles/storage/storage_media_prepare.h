@@ -27,7 +27,6 @@ enum class MimeDataState {
 	None,
 	Files,
 	PhotoFiles,
-	MediaFiles,
 	//PremiumFile,
 	Image,
 };

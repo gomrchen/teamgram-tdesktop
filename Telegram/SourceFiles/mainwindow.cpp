@@ -43,7 +43,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "window/window_main_menu.h"
 #include "window/window_controller.h" // App::wnd.
 #include "window/window_session_controller.h"
-#include "window/window_setup_email.h"
 #include "window/window_media_preview.h"
 #include "styles/style_dialogs.h"
 #include "styles/style_layers.h"
@@ -90,17 +89,17 @@ MainWindow::MainWindow(not_null<Window::Controller*> controller)
 
 	using Window::Theme::BackgroundUpdate;
 	Window::Theme::Background()->updates(
-	) | rpl::on_next([=](const BackgroundUpdate &data) {
+	) | rpl::start_with_next([=](const BackgroundUpdate &data) {
 		themeUpdated(data);
 	}, lifetime());
 
 	Core::App().passcodeLockChanges(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		updateGlobalMenu();
 	}, lifetime());
 
 	Ui::Emoji::Updated(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		Ui::ForceFullRepaint(this);
 	}, lifetime());
 
@@ -144,16 +143,14 @@ void MainWindow::finishFirstShow() {
 	windowActiveValue(
 	) | rpl::skip(1) | rpl::filter(
 		!rpl::mappers::_1
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		Ui::Tooltip::Hide();
 	}, lifetime());
 
 	setAttribute(Qt::WA_NoSystemBackground);
 
-	if (!_passcodeLock && !_setupEmailLock && _main) {
+	if (!_passcodeLock && _main) {
 		_main->activate();
-	} else if (!_passcodeLock && !_setupEmailLock && _intro) {
-		_intro->setInnerFocus();
 	}
 }
 
@@ -164,7 +161,6 @@ void MainWindow::clearWidgetsHook() {
 	if (!Core::App().passcodeLocked()) {
 		_passcodeLock.destroy();
 	}
-	_setupEmailLock.destroy();
 }
 
 QPixmap MainWindow::grabForSlideAnimation() {
@@ -202,56 +198,6 @@ void MainWindow::setupPasscodeLock() {
 	}
 }
 
-void MainWindow::setupSetupEmailLock() {
-	auto animated = (_main || _intro || _passcodeLock);
-	auto oldContentCache = animated ? grabForSlideAnimation() : QPixmap();
-	_setupEmailLock.create(bodyWidget(), &controller());
-	updateControlsGeometry();
-
-	ui_hideSettingsAndLayer(anim::type::instant);
-	if (_main) {
-		_main->hide();
-	}
-	if (_intro) {
-		_intro->hide();
-	}
-	if (_passcodeLock) {
-		_passcodeLock->hide();
-	}
-	if (animated) {
-		_setupEmailLock->showAnimated(std::move(oldContentCache));
-	} else {
-		_setupEmailLock->showFinished();
-		setInnerFocus();
-	}
-	if (const auto sessionController = controller().sessionController()) {
-		sessionController->session().attachWebView().closeAll();
-	}
-}
-
-void MainWindow::clearSetupEmailLock() {
-	if (!_setupEmailLock) {
-		return;
-	}
-
-	auto oldContentCache = grabForSlideAnimation();
-	_setupEmailLock.destroy();
-	if (_passcodeLock) {
-		_passcodeLock->show();
-		updateControlsGeometry();
-		_passcodeLock->showAnimated(std::move(oldContentCache));
-	} else if (_intro) {
-		_intro->show();
-		updateControlsGeometry();
-		_intro->showAnimated(std::move(oldContentCache), true);
-	} else if (_main) {
-		_main->show();
-		updateControlsGeometry();
-		_main->showAnimated(std::move(oldContentCache), true);
-		Core::App().checkStartUrls();
-	}
-}
-
 void MainWindow::clearPasscodeLock() {
 	Expects(_intro || _main);
 
@@ -261,11 +207,7 @@ void MainWindow::clearPasscodeLock() {
 
 	auto oldContentCache = grabForSlideAnimation();
 	_passcodeLock.destroy();
-	if (_setupEmailLock) {
-		_setupEmailLock->show();
-		updateControlsGeometry();
-		_setupEmailLock->showAnimated(std::move(oldContentCache));
-	} else if (_intro) {
+	if (_intro) {
 		_intro->show();
 		updateControlsGeometry();
 		_intro->showAnimated(std::move(oldContentCache), true);
@@ -273,14 +215,14 @@ void MainWindow::clearPasscodeLock() {
 		_main->show();
 		updateControlsGeometry();
 		_main->showAnimated(std::move(oldContentCache), true);
-		Core::App().checkStartUrls();
+		Core::App().checkStartUrl();
 	}
 }
 
 void MainWindow::setupIntro(
 		Intro::EnterPoint point,
 		QPixmap oldContentCache) {
-	auto animated = (_main || _passcodeLock || _setupEmailLock);
+	auto animated = (_main || _passcodeLock);
 
 	destroyLayer();
 	auto created = object_ptr<Intro::Widget>(
@@ -289,13 +231,13 @@ void MainWindow::setupIntro(
 		&account(),
 		point);
 	created->showSettingsRequested(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		showSettings();
 	}, created->lifetime());
 
 	clearWidgets();
 	_intro = std::move(created);
-	if (_passcodeLock || _setupEmailLock) {
+	if (_passcodeLock) {
 		_intro->hide();
 	} else {
 		_intro->show();
@@ -315,13 +257,9 @@ void MainWindow::setupMain(
 	Expects(account().sessionExists());
 
 	const auto animated = _intro
-		|| (_passcodeLock && !Core::App().passcodeLocked())
-		|| _setupEmailLock;
-	const auto weakAnimatedLayer = (_main
-			&& _layer
-			&& !_passcodeLock
-			&& !_setupEmailLock)
-		? base::make_weak(_layer.get())
+		|| (_passcodeLock && !Core::App().passcodeLocked());
+	const auto weakAnimatedLayer = (_main && _layer && !_passcodeLock)
+		? Ui::MakeWeak(_layer.get())
 		: nullptr;
 	if (weakAnimatedLayer) {
 		Assert(!animated);
@@ -337,7 +275,7 @@ void MainWindow::setupMain(
 	_main->controller()->showByInitialId(
 		Window::SectionShow::Way::ClearStack,
 		singlePeerShowAtMsgId);
-	if (_passcodeLock || _setupEmailLock) {
+	if (_passcodeLock) {
 		_main->hide();
 	} else {
 		_main->show();
@@ -347,16 +285,16 @@ void MainWindow::setupMain(
 		} else {
 			_main->activate();
 		}
-		Core::App().checkStartUrls();
+		Core::App().checkStartUrl();
 	}
 	fixOrder();
-	if (const auto strong = weakAnimatedLayer.get()) {
+	if (const auto strong = weakAnimatedLayer.data()) {
 		strong->hideAllAnimatedRun();
 	}
 }
 
 void MainWindow::showSettings() {
-	if (_passcodeLock || _setupEmailLock) {
+	if (_passcodeLock) {
 		return;
 	}
 
@@ -372,7 +310,7 @@ void MainWindow::showSettings() {
 void MainWindow::showSpecialLayer(
 		object_ptr<Ui::LayerWidget> layer,
 		anim::type animated) {
-	if (_passcodeLock || _setupEmailLock) {
+	if (_passcodeLock) {
 		return;
 	}
 
@@ -394,7 +332,7 @@ bool MainWindow::showSectionInExistingLayer(
 }
 
 void MainWindow::showMainMenu() {
-	if (_passcodeLock || _setupEmailLock) return;
+	if (_passcodeLock) return;
 
 	if (isHidden()) showFromTray();
 
@@ -415,7 +353,7 @@ void MainWindow::ensureLayerCreated() {
 	_layer->hideFinishEvents(
 	) | rpl::filter([=] {
 		return _layer != nullptr; // Last hide finish is sent from destructor.
-	}) | rpl::on_next([=] {
+	}) | rpl::start_with_next([=] {
 		destroyLayer();
 	}, _layer->lifetime());
 
@@ -604,8 +542,6 @@ void MainWindow::setInnerFocus() {
 		_layer->setInnerFocus();
 	} else if (_passcodeLock) {
 		_passcodeLock->setInnerFocus();
-	} else if (_setupEmailLock) {
-		_setupEmailLock->setInnerFocus();
 	} else if (_main) {
 		_main->setInnerFocus();
 	} else if (_intro) {
@@ -689,7 +625,6 @@ bool MainWindow::takeThirdSectionFromLayer() {
 }
 
 void MainWindow::fixOrder() {
-	if (_setupEmailLock) _setupEmailLock->raise();
 	if (_passcodeLock) _passcodeLock->raise();
 	if (_layer) _layer->raise();
 	if (_mediaPreview) _mediaPreview->raise();
@@ -727,7 +662,6 @@ void MainWindow::updateControlsGeometry() {
 
 	auto body = bodyWidget()->rect();
 	if (_passcodeLock) _passcodeLock->setGeometry(body);
-	if (_setupEmailLock) _setupEmailLock->setGeometry(body);
 	auto mainLeft = 0;
 	auto mainWidth = body.width();
 	if (const auto session = sessionController()) {

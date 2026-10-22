@@ -22,14 +22,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/peers/edit_peer_history_visibility_box.h"
 #include "boxes/peers/edit_peer_permissions_box.h"
 #include "boxes/peers/edit_peer_invite_links.h"
-#include "boxes/peers/edit_discussion_link_box.h"
+#include "boxes/peers/edit_linked_chat_box.h"
 #include "boxes/peers/edit_peer_requests_box.h"
 #include "boxes/peers/edit_peer_reactions.h"
 #include "boxes/peers/replace_boost_box.h"
-#include "boxes/peers/toggle_topics_box.h"
 #include "boxes/peers/verify_peers_box.h"
 #include "boxes/peer_list_controllers.h"
-#include "boxes/edit_privacy_box.h" // EditDirectMessagesPriceBox
 #include "boxes/stickers_box.h"
 #include "boxes/username_box.h"
 #include "chat_helpers/emoji_suggestions_widget.h"
@@ -82,7 +80,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "window/window_session_controller.h"
 #include "api/api_invite_links.h"
 #include "styles/style_chat_helpers.h"
-#include "styles/style_credits.h"
 #include "styles/style_layers.h"
 #include "styles/style_menu_icons.h"
 #include "styles/style_settings.h"
@@ -134,7 +131,7 @@ void AddButtonWithCount(
 not_null<Ui::SettingsButton*> AddButtonWithText(
 		not_null<Ui::VerticalLayout*> parent,
 		rpl::producer<QString> &&text,
-		rpl::producer<TextWithEntities> &&label,
+		rpl::producer<QString> &&label,
 		Fn<void()> callback,
 		Settings::IconDescriptor &&descriptor) {
 	return parent->add(EditPeerInfoBox::CreateButton(
@@ -144,20 +141,6 @@ not_null<Ui::SettingsButton*> AddButtonWithText(
 		std::move(callback),
 		st::manageGroupTopButtonWithText,
 		std::move(descriptor)));
-}
-
-not_null<Ui::SettingsButton*> AddButtonWithText(
-		not_null<Ui::VerticalLayout*> parent,
-		rpl::producer<QString> &&text,
-		rpl::producer<QString> &&label,
-		Fn<void()> callback,
-		Settings::IconDescriptor &&descriptor) {
-	return AddButtonWithText(
-		parent,
-		std::move(text),
-		std::move(label) | rpl::map(tr::marked),
-		std::move(callback),
-		std::move(descriptor));
 }
 
 void AddButtonDelete(
@@ -182,8 +165,11 @@ void SaveDefaultRestrictions(
 
 	const auto requestId = api->request(
 		MTPmessages_EditChatDefaultBannedRights(
-			peer->input(),
-			RestrictionsToMTP({ rights, 0 }))
+			peer->input,
+			MTP_chatBannedRights(
+				MTP_flags(
+					MTPDchatBannedRights::Flags::from_raw(uint32(rights))),
+				MTP_int(0)))
 	).done([=](const MTPUpdates &result) {
 		api->clearModifyRequest(key);
 		api->applyUpdates(result);
@@ -214,7 +200,7 @@ void SaveSlowmodeSeconds(
 	const auto key = Api::RequestKey("slowmode_seconds", channel->id);
 
 	const auto requestId = api->request(MTPchannels_ToggleSlowMode(
-		channel->inputChannel(),
+		channel->inputChannel,
 		MTP_int(seconds)
 	)).done([=](const MTPUpdates &result) {
 		api->clearModifyRequest(key);
@@ -234,43 +220,27 @@ void SaveSlowmodeSeconds(
 }
 
 void SaveStarsPerMessage(
-		std::shared_ptr<Ui::Show> show,
 		not_null<ChannelData*> channel,
 		int starsPerMessage,
-		Fn<void(bool)> done) {
+		Fn<void()> done) {
 	const auto api = &channel->session().api();
 	const auto key = Api::RequestKey("stars_per_message", channel->id);
 
-	const auto broadcast = channel->isBroadcast();
-
-	using Flag = MTPchannels_UpdatePaidMessagesPrice::Flag;
-	const auto broadcastAllowed = broadcast && (starsPerMessage >= 0);
 	const auto requestId = api->request(MTPchannels_UpdatePaidMessagesPrice(
-		MTP_flags(broadcastAllowed
-			? Flag::f_broadcast_messages_allowed
-			: Flag(0)),
-		channel->inputChannel(),
+		channel->inputChannel,
 		MTP_long(starsPerMessage)
 	)).done([=](const MTPUpdates &result) {
 		api->clearModifyRequest(key);
 		api->applyUpdates(result);
-		if (!broadcast) {
-			channel->owner().editStarsPerMessage(channel, starsPerMessage);
-		}
-		done(true);
+		channel->setStarsPerMessage(starsPerMessage);
+		done();
 	}).fail([=](const MTP::Error &error) {
 		api->clearModifyRequest(key);
 		if (error.type() != u"CHAT_NOT_MODIFIED"_q) {
-			show->showToast(error.type());
-			done(false);
-		} else {
-			if (!broadcast) {
-				channel->owner().editStarsPerMessage(
-					channel,
-					starsPerMessage);
-			}
-			done(true);
+			return;
 		}
+		channel->setStarsPerMessage(starsPerMessage);
+		done();
 	}).send();
 
 	api->registerModifyRequest(key, requestId);
@@ -284,7 +254,7 @@ void SaveBoostsUnrestrict(
 	const auto key = Api::RequestKey("boosts_unrestrict", channel->id);
 	const auto requestId = api->request(
 		MTPchannels_SetBoostsToUnblockRestrictions(
-			channel->inputChannel(),
+			channel->inputChannel,
 			MTP_int(boostsUnrestrict))
 	).done([=](const MTPUpdates &result) {
 		api->clearModifyRequest(key);
@@ -310,7 +280,6 @@ void SaveBoostsUnrestrict(
 void ShowEditPermissions(
 		not_null<Window::SessionNavigation*> navigation,
 		not_null<PeerData*> peer) {
-	const auto show = navigation->uiShow();
 	auto createBox = [=](not_null<Ui::GenericBox*> box) {
 		const auto saving = box->lifetime().make_state<int>(0);
 		const auto save = [=](
@@ -329,10 +298,7 @@ void ShowEditPermissions(
 					channel,
 					result.boostsUnrestrict,
 					close);
-				const auto price = result.starsPerMessage;
-				SaveStarsPerMessage(show, channel, price, [=](bool ok) {
-					close();
-				});
+				SaveStarsPerMessage(channel, result.starsPerMessage, close);
 			}
 		};
 		auto done = [=](EditPeerPermissionsBoxResult result) {
@@ -360,14 +326,6 @@ void ShowEditPermissions(
 		ShowEditPeerPermissionsBox(box, navigation, peer, std::move(done));
 	};
 	navigation->parentController()->show(Box(std::move(createBox)));
-}
-
-[[nodiscard]] int CurrentPricePerDirectMessage(
-		not_null<ChannelData*> broadcast) {
-	const auto monoforumLink = broadcast->monoforumLink();
-	return (monoforumLink && !monoforumLink->monoforumDisabled())
-		? monoforumLink->commonStarsPerMessage()
-		: -1;
 }
 
 class Controller : public base::has_weak_ptr {
@@ -400,15 +358,12 @@ private:
 		std::optional<QString> description;
 		std::optional<bool> hiddenPreHistory;
 		std::optional<bool> forum;
-		std::optional<bool> forumTabs;
-		std::optional<bool> autotranslate;
 		std::optional<bool> signatures;
 		std::optional<bool> signatureProfiles;
 		std::optional<bool> noForwards;
 		std::optional<bool> joinToWrite;
 		std::optional<bool> requestToJoin;
-		std::optional<ChannelData*> discussionLink;
-		std::optional<int> starsPerDirectMessage;
+		std::optional<ChannelData*> linkedChat;
 	};
 
 	[[nodiscard]] object_ptr<Ui::RpWidget> createPhotoAndTitleEdit();
@@ -424,15 +379,12 @@ private:
 	void refreshForumToggleLocked();
 	void showEditPeerTypeBox(
 		std::optional<rpl::producer<QString>> error = {});
-	void showEditDiscussionLinkBox();
-	void showEditDirectMessagesBox();
+	void showEditLinkedChatBox();
 	void fillPrivacyTypeButton();
-	void fillDiscussionLinkButton();
-	void fillDirectMessagesButton();
+	void fillLinkedChatButton();
 	//void fillInviteLinkButton();
 	void fillForumButton();
 	void fillColorIndexButton();
-	void fillAutoTranslateButton();
 	void fillSignaturesButton();
 	void fillHistoryVisibilityButton();
 	void fillManageSection();
@@ -456,13 +408,11 @@ private:
 	[[nodiscard]] std::optional<Saving> validate() const;
 	[[nodiscard]] bool validateUsernamesOrder(Saving &to) const;
 	[[nodiscard]] bool validateUsername(Saving &to) const;
-	[[nodiscard]] bool validateDiscussionLink(Saving &to) const;
-	[[nodiscard]] bool validateDirectMessagesPrice(Saving &to) const;
+	[[nodiscard]] bool validateLinkedChat(Saving &to) const;
 	[[nodiscard]] bool validateTitle(Saving &to) const;
 	[[nodiscard]] bool validateDescription(Saving &to) const;
 	[[nodiscard]] bool validateHistoryVisibility(Saving &to) const;
 	[[nodiscard]] bool validateForum(Saving &to) const;
-	[[nodiscard]] bool validateAutotranslate(Saving &to) const;
 	[[nodiscard]] bool validateSignatures(Saving &to) const;
 	[[nodiscard]] bool validateForwards(Saving &to) const;
 	[[nodiscard]] bool validateJoinToWrite(Saving &to) const;
@@ -471,13 +421,11 @@ private:
 	void save();
 	void saveUsernamesOrder();
 	void saveUsername();
-	void saveDiscussionLink();
-	void saveDirectMessagesPrice();
+	void saveLinkedChat();
 	void saveTitle();
 	void saveDescription();
 	void saveHistoryVisibility();
 	void saveForum();
-	void saveAutotranslate();
 	void saveSignatures();
 	void saveForwards();
 	void saveJoinToWrite();
@@ -498,15 +446,12 @@ private:
 	void subscribeToMigration();
 	void migrate(not_null<ChannelData*> channel);
 
-	std::optional<ChannelData*> _discussionLinkSavedValue;
-	ChannelData *_discussionLinkOriginalValue = nullptr;
+	std::optional<ChannelData*> _linkedChatSavedValue;
+	ChannelData *_linkedChatOriginalValue = nullptr;
 	bool _channelHasLocationOriginalValue = false;
-	std::optional<rpl::variable<int>> _starsPerDirectMessageSavedValue;
 	std::optional<HistoryVisibility> _historyVisibilitySavedValue;
 	std::optional<EditPeerTypeData> _typeDataSavedValue;
 	std::optional<bool> _forumSavedValue;
-	std::optional<bool> _forumTabsSavedValue;
-	std::optional<bool> _autotranslateSavedValue;
 	std::optional<bool> _signaturesSavedValue;
 	std::optional<bool> _signatureProfilesSavedValue;
 
@@ -529,8 +474,8 @@ private:
 	};
 
 	const rpl::event_stream<PrivacyAndForwards> _privacyTypeUpdates;
-	const rpl::event_stream<ChannelData*> _discussionLinkUpdates;
-	mtpRequestId _discussionLinksRequestId = 0;
+	const rpl::event_stream<ChannelData*> _linkedChatUpdates;
+	mtpRequestId _linkedChatsRequestId = 0;
 
 	rpl::lifetime _lifetime;
 
@@ -610,11 +555,11 @@ object_ptr<Ui::RpWidget> Controller::createPhotoAndTitleEdit() {
 		container,
 		createTitleEdit());
 	photoWrap->heightValue(
-	) | rpl::on_next([container](int height) {
+	) | rpl::start_with_next([container](int height) {
 		container->resize(container->width(), height);
 	}, photoWrap->lifetime());
 	container->widthValue(
-	) | rpl::on_next([titleEdit](int width) {
+	) | rpl::start_with_next([titleEdit](int width) {
 		const auto left = st::editPeerPhotoMargins.left()
 			+ st::defaultUserpicButton.size.width();
 		titleEdit->resizeToWidth(width - left);
@@ -662,15 +607,14 @@ object_ptr<Ui::RpWidget> Controller::createTitleEdit() {
 	result->entity()->setMaxLength(Ui::EditPeer::kMaxGroupChannelTitle);
 	result->entity()->setInstantReplaces(Ui::InstantReplaces::Default());
 	result->entity()->setInstantReplacesEnabled(
-		Core::App().settings().replaceEmojiValue(),
-		Core::App().settings().systemTextReplaceValue());
+		Core::App().settings().replaceEmojiValue());
 	Ui::Emoji::SuggestionsController::Init(
 		_wrap->window(),
 		result->entity(),
 		&_peer->session());
 
 	result->entity()->submits(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		submitTitle();
 	}, result->entity()->lifetime());
 
@@ -700,7 +644,7 @@ object_ptr<Ui::RpWidget> Controller::createTitleEdit() {
 		emojiPanel->hide();
 		emojiPanel->selector()->setCurrentPeer(_peer);
 		emojiPanel->selector()->emojiChosen(
-		) | rpl::on_next([=](ChatHelpers::EmojiChosen data) {
+		) | rpl::start_with_next([=](ChatHelpers::EmojiChosen data) {
 			Ui::InsertEmojiAtCursor(field->textCursor(), data.emoji);
 			field->setFocus();
 		}, field->lifetime());
@@ -734,7 +678,7 @@ object_ptr<Ui::RpWidget> Controller::createTitleEdit() {
 			});
 		}());
 
-		field->widthValue() | rpl::on_next([=](int width) {
+		field->widthValue() | rpl::start_with_next([=](int width) {
 			const auto &p = st::editPeerTitleEmojiPosition;
 			emojiToggle->moveToRight(p.x(), p.y(), width);
 			updateEmojiPanelGeometry();
@@ -771,8 +715,7 @@ object_ptr<Ui::RpWidget> Controller::createDescriptionEdit() {
 	result->entity()->setMaxLength(Ui::EditPeer::kMaxChannelDescription);
 	result->entity()->setInstantReplaces(Ui::InstantReplaces::Default());
 	result->entity()->setInstantReplacesEnabled(
-		Core::App().settings().replaceEmojiValue(),
-		Core::App().settings().systemTextReplaceValue());
+		Core::App().settings().replaceEmojiValue());
 	result->entity()->setSubmitSettings(
 		Core::App().settings().sendSubmitWay());
 	Ui::Emoji::SuggestionsController::Init(
@@ -781,7 +724,7 @@ object_ptr<Ui::RpWidget> Controller::createDescriptionEdit() {
 		&_peer->session());
 
 	result->entity()->submits(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		submitDescription();
 	}, result->entity()->lifetime());
 
@@ -872,7 +815,7 @@ void Controller::refreshHistoryVisibility() {
 	_controls.historyVisibilityWrap->toggle(
 		(!withUsername
 			&& !_channelHasLocationOriginalValue
-			&& (!_discussionLinkSavedValue || !*_discussionLinkSavedValue)
+			&& (!_linkedChatSavedValue || !*_linkedChatSavedValue)
 			&& (!_forumSavedValue || !*_forumSavedValue)),
 		anim::type::instant);
 }
@@ -884,8 +827,8 @@ void Controller::showEditPeerTypeBox(
 		_typeDataSavedValue = data;
 		refreshHistoryVisibility();
 	});
-	_typeDataSavedValue->hasDiscussionLink
-		= (_discussionLinkSavedValue.value_or(nullptr) != nullptr);
+	_typeDataSavedValue->hasLinkedChat
+		= (_linkedChatSavedValue.value_or(nullptr) != nullptr);
 	const auto box = _navigation->parentController()->show(
 		Box<EditPeerTypeBox>(
 			_navigation,
@@ -895,12 +838,12 @@ void Controller::showEditPeerTypeBox(
 			_typeDataSavedValue,
 			error));
 	box->boxClosing(
-	) | rpl::on_next([peer = _peer] {
+	) | rpl::start_with_next([peer = _peer] {
 		peer->session().api().usernames().requestToCache(peer);
 	}, box->lifetime());
 }
 
-void Controller::showEditDiscussionLinkBox() {
+void Controller::showEditLinkedChatBox() {
 	Expects(_peer->isChannel());
 
 	if (_forumSavedValue && *_forumSavedValue) {
@@ -908,14 +851,14 @@ void Controller::showEditDiscussionLinkBox() {
 		return;
 	}
 
-	const auto box = std::make_shared<base::weak_qptr<Ui::BoxContent>>();
+	const auto box = std::make_shared<QPointer<Ui::BoxContent>>();
 	const auto channel = _peer->asChannel();
 	const auto callback = [=](ChannelData *result) {
 		if (*box) {
 			(*box)->closeBox();
 		}
-		*_discussionLinkSavedValue = result;
-		_discussionLinkUpdates.fire_copy(result);
+		*_linkedChatSavedValue = result;
+		_linkedChatUpdates.fire_copy(result);
 		refreshHistoryVisibility();
 		refreshForumToggleLocked();
 	};
@@ -926,31 +869,31 @@ void Controller::showEditDiscussionLinkBox() {
 			&& (!channel->hiddenPreHistory()
 				|| channel->canEditPreHistoryHidden()));
 
-	if (const auto chat = *_discussionLinkSavedValue) {
-		*box = _navigation->parentController()->show(EditDiscussionLinkBox(
+	if (const auto chat = *_linkedChatSavedValue) {
+		*box = _navigation->parentController()->show(EditLinkedChatBox(
 			_navigation,
 			channel,
 			chat,
 			canEdit,
 			callback));
 		return;
-	} else if (!canEdit || _discussionLinksRequestId) {
+	} else if (!canEdit || _linkedChatsRequestId) {
 		return;
 	} else if (channel->isMegagroup()) {
 		if (_forumSavedValue
 			&& *_forumSavedValue
-			&& _discussionLinkOriginalValue) {
+			&& _linkedChatOriginalValue) {
 			ShowForumForDiscussionError(_navigation);
 		} else {
-			// Restore original discussion link.
-			callback(_discussionLinkOriginalValue);
+			// Restore original linked channel.
+			callback(_linkedChatOriginalValue);
 		}
 		return;
 	}
-	_discussionLinksRequestId = _api.request(
+	_linkedChatsRequestId = _api.request(
 		MTPchannels_GetGroupsForDiscussion()
 	).done([=](const MTPmessages_Chats &result) {
-		_discussionLinksRequestId = 0;
+		_linkedChatsRequestId = 0;
 		const auto list = result.match([&](const auto &data) {
 			return data.vchats().v;
 		});
@@ -959,28 +902,14 @@ void Controller::showEditDiscussionLinkBox() {
 		for (const auto &item : list) {
 			chats.emplace_back(_peer->owner().processChat(item));
 		}
-		*box = _navigation->parentController()->show(EditDiscussionLinkBox(
+		*box = _navigation->parentController()->show(EditLinkedChatBox(
 			_navigation,
 			channel,
 			std::move(chats),
 			callback));
 	}).fail([=] {
-		_discussionLinksRequestId = 0;
+		_linkedChatsRequestId = 0;
 	}).send();
-}
-
-void Controller::showEditDirectMessagesBox() {
-	Expects(_peer->isBroadcast());
-	Expects(_starsPerDirectMessageSavedValue.has_value());
-
-	const auto stars = _starsPerDirectMessageSavedValue->current();
-	_navigation->parentController()->show(Box(
-		EditDirectMessagesPriceBox,
-		_peer->asChannel(),
-		(stars >= 0) ? stars : std::optional<int>(),
-		[=](std::optional<int> value) {
-			*_starsPerDirectMessageSavedValue = value.value_or(-1);
-		}));
 }
 
 void Controller::fillPrivacyTypeButton() {
@@ -1045,14 +974,12 @@ void Controller::fillPrivacyTypeButton() {
 	});
 }
 
-void Controller::fillDiscussionLinkButton() {
+void Controller::fillLinkedChatButton() {
 	Expects(_controls.buttonsLayout != nullptr);
 
-	_discussionLinkSavedValue
-		= _discussionLinkOriginalValue
-		= (_peer->isChannel()
-			? _peer->asChannel()->discussionLink()
-			: nullptr);
+	_linkedChatSavedValue = _linkedChatOriginalValue = _peer->isChannel()
+		? _peer->asChannel()->linkedChat()
+		: nullptr;
 
 	const auto isGroup = (_peer->isChat() || _peer->isMegagroup());
 	auto text = !isGroup
@@ -1060,7 +987,7 @@ void Controller::fillDiscussionLinkButton() {
 		: rpl::combine(
 			tr::lng_manage_linked_channel(),
 			tr::lng_manage_linked_channel_restore(),
-			_discussionLinkUpdates.events()
+			_linkedChatUpdates.events()
 		) | rpl::map([=](
 				const QString &edit,
 				const QString &restore,
@@ -1068,53 +995,23 @@ void Controller::fillDiscussionLinkButton() {
 			return chat ? edit : restore;
 		});
 	auto label = isGroup
-		? _discussionLinkUpdates.events(
+		? _linkedChatUpdates.events(
 		) | rpl::map([](ChannelData *chat) {
 			return chat ? chat->name() : QString();
-		}) | rpl::type_erased
+		}) | rpl::type_erased()
 		: rpl::combine(
 			tr::lng_manage_discussion_group_add(),
-			_discussionLinkUpdates.events()
+			_linkedChatUpdates.events()
 		) | rpl::map([=](const QString &add, ChannelData *chat) {
 			return chat ? chat->name() : add;
-		}) | rpl::type_erased;
+		}) | rpl::type_erased();
 	AddButtonWithText(
 		_controls.buttonsLayout,
 		std::move(text),
 		std::move(label),
-		[=] { showEditDiscussionLinkBox(); },
+		[=] { showEditLinkedChatBox(); },
 		{ isGroup ? &st::menuIconChannel : &st::menuIconGroups });
-	_discussionLinkUpdates.fire_copy(*_discussionLinkSavedValue);
-}
-
-void Controller::fillDirectMessagesButton() {
-	Expects(_controls.buttonsLayout != nullptr);
-
-	if (!_peer->isBroadcast() || !_peer->asChannel()->canEditInformation()) {
-		return;
-	}
-
-	const auto perMessage = CurrentPricePerDirectMessage(_peer->asChannel());
-	_starsPerDirectMessageSavedValue = rpl::variable<int>(perMessage);
-
-	auto label = _starsPerDirectMessageSavedValue->value(
-	) | rpl::map([](int starsPerMessage) {
-		return (starsPerMessage < 0)
-			? tr::lng_manage_monoforum_off(tr::marked)
-			: !starsPerMessage
-			? tr::lng_manage_monoforum_free(tr::marked)
-			: rpl::single(Ui::Text::IconEmoji(
-				&st::starIconEmojiColored
-			).append(' ').append(
-				Lang::FormatCreditsAmountDecimal(
-					CreditsAmount{ starsPerMessage })));
-	}) | rpl::flatten_latest();
-	AddButtonWithText(
-		_controls.buttonsLayout,
-		tr::lng_manage_monoforum(),
-		std::move(label),
-		[=] { showEditDirectMessagesBox(); },
-		{ .icon = &st::menuIconChats, .newBadge = true });
+	_linkedChatUpdates.fire_copy(*_linkedChatSavedValue);
 }
 //
 //void Controller::fillInviteLinkButton() {
@@ -1134,31 +1031,22 @@ void Controller::fillDirectMessagesButton() {
 void Controller::fillForumButton() {
 	Expects(_controls.buttonsLayout != nullptr);
 
-	_forumSavedValue = _peer->isForum();
-	_forumTabsSavedValue = !_peer->isChannel()
-		|| !_peer->isForum()
-		|| _peer->useSubsectionTabs();
-
-	const auto changes = std::make_shared<rpl::event_stream<>>();
-	const auto label = [=] {
-		return !*_forumSavedValue
-			? tr::lng_manage_monoforum_off(tr::now)
-			: *_forumTabsSavedValue
-			? tr::lng_edit_topics_tabs(tr::now)
-			: tr::lng_edit_topics_list(tr::now);
-	};
 	const auto button = _controls.forumToggle = _controls.buttonsLayout->add(
 		EditPeerInfoBox::CreateButton(
 			_controls.buttonsLayout,
 			tr::lng_forum_topics_switch(),
-			changes->events_starting_with({}) | rpl::map(label),
+			rpl::single(QString()),
 			[] {},
 			st::manageGroupTopicsButton,
-			{ .icon = &st::menuIconTopics, .newBadge = true }));
-
-	button->setClickedCallback(crl::guard(this, [=] {
-		if (!*_forumSavedValue && _controls.forumToggleLocked) {
-			if (_discussionLinkSavedValue && *_discussionLinkSavedValue) {
+			{ &st::menuIconTopics }));
+	const auto unlocks = std::make_shared<rpl::event_stream<bool>>();
+	button->toggleOn(
+		rpl::single(_peer->isForum()) | rpl::then(unlocks->events())
+	)->toggledValue(
+	) | rpl::start_with_next([=](bool toggled) {
+		if (_controls.forumToggleLocked && toggled) {
+			unlocks->fire(false);
+			if (_linkedChatSavedValue && *_linkedChatSavedValue) {
 				ShowForumForDiscussionError(_navigation);
 			} else {
 				_navigation->showToast(
@@ -1166,24 +1054,16 @@ void Controller::fillForumButton() {
 						tr::now,
 						lt_count,
 						EnableForumMinMembers(_peer),
-						tr::rich));
+						Ui::Text::RichLangValue));
 			}
 		} else {
-			_navigation->uiShow()->show(Box(
-				Ui::ToggleTopicsBox,
-				*_forumSavedValue,
-				*_forumTabsSavedValue,
-				crl::guard(this, [=](bool topics, bool topicsTabs) {
-					_forumSavedValue = topics;
-					_forumTabsSavedValue = !topics || topicsTabs;
-					if (topics) {
-						_savingData.hiddenPreHistory = false;
-					}
-					changes->fire({});
-					refreshHistoryVisibility();
-				})));
+			_forumSavedValue = toggled;
+			if (toggled) {
+				_savingData.hiddenPreHistory = false;
+			}
+			refreshHistoryVisibility();
 		}
-	}));
+	}, _controls.buttonsLayout->lifetime());
 	refreshForumToggleLocked();
 }
 
@@ -1196,8 +1076,8 @@ void Controller::refreshForumToggleLocked() {
 	const auto channel = _peer->asChannel();
 	const auto notenough = !_peer->isForum()
 		&& ((chat ? chat->count : channel->membersCount()) < limit);
-	const auto linked = _discussionLinkSavedValue
-		&& *_discussionLinkSavedValue;
+	const auto linked = _linkedChatSavedValue
+		&& *_linkedChatSavedValue;
 	const auto locked = _controls.forumToggleLocked = notenough || linked;
 	_controls.forumToggle->setToggleLocked(locked);
 }
@@ -1205,74 +1085,12 @@ void Controller::refreshForumToggleLocked() {
 void Controller::fillColorIndexButton() {
 	Expects(_controls.buttonsLayout != nullptr);
 
+	const auto show = _navigation->uiShow();
 	AddPeerColorButton(
 		_controls.buttonsLayout,
 		_navigation->uiShow(),
 		_peer,
 		st::managePeerColorsButton);
-}
-
-void Controller::fillAutoTranslateButton() {
-	Expects(_controls.buttonsLayout != nullptr);
-
-	const auto channel = _peer->asBroadcast();
-	if (!channel) {
-		return;
-	}
-
-	const auto requiredLevel = Data::LevelLimits(&channel->session())
-		.channelAutoTranslateLevelMin();
-	const auto autotranslate = _controls.buttonsLayout->add(
-		EditPeerInfoBox::CreateButton(
-			_controls.buttonsLayout,
-			tr::lng_edit_autotranslate(),
-			rpl::single(QString()),
-			[] {},
-			st::manageGroupTopicsButton,
-			{ &st::menuIconTranslate }));
-	struct State {
-		rpl::event_stream<bool> toggled;
-		rpl::variable<bool> isLocked = false;
-	};
-	const auto state = autotranslate->lifetime().make_state<State>();
-	autotranslate->toggleOn(rpl::single(
-		channel->autoTranslation()
-	) | rpl::then(state->toggled.events()));
-	state->isLocked = (channel->levelHint() < requiredLevel);
-	const auto reason = Ui::AskBoostReason{
-		.data = Ui::AskBoostAutotranslate{ .requiredLevel = requiredLevel },
-	};
-
-	state->isLocked.value() | rpl::on_next([=](bool locked) {
-		autotranslate->setToggleLocked(locked);
-	}, autotranslate->lifetime());
-
-	autotranslate->toggledChanges(
-	) | rpl::on_next([=](bool value) {
-		if (!state->isLocked.current()) {
-			_autotranslateSavedValue = value;
-		} else if (value) {
-			state->toggled.fire(false);
-			auto weak = base::make_weak(autotranslate);
-			CheckBoostLevel(
-				_navigation->uiShow(),
-				_peer,
-				[=](int level) {
-					if (weak.get()) {
-						state->isLocked = (level < requiredLevel);
-					}
-					return (level < requiredLevel)
-						? std::make_optional(reason)
-						: std::nullopt;
-				},
-				[] {});
-		}
-	}, autotranslate->lifetime());
-
-	autotranslate->toggledValue(
-	) | rpl::on_next([=](bool toggled) {
-		_autotranslateSavedValue = toggled;
-	}, _controls.buttonsLayout->lifetime());
 }
 
 void Controller::fillSignaturesButton() {
@@ -1307,12 +1125,12 @@ void Controller::fillSignaturesButton() {
 	profiles->entity()->toggleOn(rpl::single(
 		channel->addsSignature() && channel->signatureProfiles()
 	))->toggledValue(
-	) | rpl::on_next([=](bool toggled) {
+	) | rpl::start_with_next([=](bool toggled) {
 		_signatureProfilesSavedValue = toggled;
 	}, profiles->entity()->lifetime());
 
 	signs->toggledValue(
-	) | rpl::on_next([=](bool toggled) {
+	) | rpl::start_with_next([=](bool toggled) {
 		_signaturesSavedValue = toggled;
 		if (!toggled) {
 			_signatureProfilesSavedValue = false;
@@ -1324,8 +1142,8 @@ void Controller::fillSignaturesButton() {
 		_controls.buttonsLayout,
 		rpl::conditional(
 			signs->toggledValue(),
-			tr::lng_edit_sign_profiles_about(tr::marked),
-			tr::lng_edit_sign_messages_about(tr::marked)));
+			tr::lng_edit_sign_profiles_about(Ui::Text::WithEntities),
+			tr::lng_edit_sign_messages_about(Ui::Text::WithEntities)));
 	Ui::AddSkip(_controls.buttonsLayout);
 }
 
@@ -1413,11 +1231,11 @@ void Controller::fillManageSection() {
 				container,
 				tr::lng_manage_peer_bot_about(
 					lt_bot,
-					rpl::single(tr::link(
+					rpl::single(Ui::Text::Link(
 						'@' + kBotManagerUsername.utf16(),
 						_peer->session().createInternalLinkFull(
 							kBotManagerUsername.utf16()))),
-					tr::rich),
+					Ui::Text::RichLangValue),
 				st::boxDividerLabel),
 			st::defaultBoxDividerLabelPadding));
 		fillBotVerifyAccounts();
@@ -1437,8 +1255,6 @@ void Controller::fillManageSection() {
 	const auto canEditSignatures = isChannel
 		&& channel->canEditSignatures()
 		&& !channel->isMegagroup();
-	const auto canEditAutoTranslate = isChannel
-		&& channel->canEditAutoTranslate();
 	const auto canEditPreHistoryHidden = isChannel
 		? channel->canEditPreHistoryHidden()
 		: chat->canEditPreHistoryHidden();
@@ -1469,11 +1285,9 @@ void Controller::fillManageSection() {
 	const auto canEditStickers = isChannel && channel->canEditStickers();
 	const auto canDeleteChannel = isChannel && channel->canDelete();
 	const auto canEditColorIndex = isChannel && channel->canEditEmoji();
-	const auto canViewOrEditDiscussionLink = isChannel
-		&& (channel->discussionLink()
+	const auto canViewOrEditLinkedChat = isChannel
+		&& (channel->linkedChat()
 			|| (channel->isBroadcast() && channel->canEditInformation()));
-	const auto canEditDirectMessages = isChannel
-		&& (channel->isBroadcast() && channel->canEditInformation());
 
 	::AddSkip(_controls.buttonsLayout, 0);
 
@@ -1482,11 +1296,8 @@ void Controller::fillManageSection() {
 	//} else if (canEditInviteLinks) {
 	//	fillInviteLinkButton();
 	}
-	if (canViewOrEditDiscussionLink) {
-		fillDiscussionLinkButton();
-	}
-	if (canEditDirectMessages) {
-		fillDirectMessagesButton();
+	if (canViewOrEditLinkedChat) {
+		fillLinkedChatButton();
 	}
 	if (canEditPreHistoryHidden) {
 		fillHistoryVisibilityButton();
@@ -1497,16 +1308,13 @@ void Controller::fillManageSection() {
 	if (canEditColorIndex) {
 		fillColorIndexButton();
 	}
-	if (canEditAutoTranslate) {
-		fillAutoTranslateButton();
-	}
 	if (canEditSignatures) {
 		fillSignaturesButton();
 	} else if (canEditPreHistoryHidden
 		|| canEditForum
 		|| canEditColorIndex
 		//|| canEditInviteLinks
-		|| canViewOrEditDiscussionLink
+		|| canViewOrEditLinkedChat
 		|| canEditType) {
 		::AddSkip(_controls.buttonsLayout);
 	}
@@ -1530,8 +1338,6 @@ void Controller::fillManageSection() {
 				? tr::lng_manage_peer_reactions_on(tr::now)
 				: some
 				? QString::number(some)
-				: allowed.paidEnabled
-				? QString::number(1)
 				: tr::lng_manage_peer_reactions_off(tr::now);
 		});
 		AddButtonWithCount(
@@ -1719,7 +1525,7 @@ void Controller::editReactions() {
 	}
 	_controls.levelRequested = true;
 	_api.request(MTPpremium_GetBoostsStatus(
-		_peer->input()
+		_peer->input
 	)).done([=](const MTPpremium_BoostsStatus &result) {
 		_controls.levelRequested = false;
 		if (const auto channel = _peer->asChannel()) {
@@ -1737,11 +1543,7 @@ void Controller::editReactions() {
 				strong->show(Box(Ui::AskBoostBox, Ui::AskBoostBoxData{
 					.link = link,
 					.boost = counters,
-					.features = (_peer->isChannel()
-						? LookupBoostFeatures(_peer->asChannel())
-						: Ui::BoostFeatures()),
 					.reason = { Ui::AskBoostCustomReactions{ required } },
-					.group = !_peer->isBroadcast(),
 				}, openStatistics, nullptr));
 			}
 		};
@@ -1783,7 +1585,7 @@ void Controller::fillPendingRequestsButton() {
 		{ &st::menuIconInvite });
 	std::move(
 		pendingRequestsCount
-	) | rpl::on_next([=](int count) {
+	) | rpl::start_with_next([=](int count) {
 		wrap->toggle(count > 0, anim::type::instant);
 	}, wrap->lifetime());
 }
@@ -1851,8 +1653,9 @@ void Controller::fillBotCurrencyButton() {
 
 	auto &lifetime = _controls.buttonsLayout->lifetime();
 	const auto state = lifetime.make_state<State>();
-	const auto format = [=](const CreditsAmount &balance) {
-		return Lang::FormatCreditsAmountDecimal(balance);
+	const auto format = [=](uint64 balance) {
+		return Info::ChannelEarn::MajorPart(balance)
+			+ Info::ChannelEarn::MinorPart(balance);
 	};
 	const auto was = _peer->session().credits().balanceCurrency(
 		_peer->id);
@@ -1879,7 +1682,7 @@ void Controller::fillBotCurrencyButton() {
 		const auto currencyLoad
 			= button->lifetime().make_state<Api::EarnStatistics>(_peer);
 		currencyLoad->request(
-		) | rpl::on_error_done([=](const QString &error) {
+		) | rpl::start_with_error_done([=](const QString &error) {
 		}, [=] {
 			const auto balance = currencyLoad->data().currentBalance;
 			if (balance) {
@@ -1892,13 +1695,13 @@ void Controller::fillBotCurrencyButton() {
 		const auto icon = Ui::CreateChild<Ui::RpWidget>(button);
 		icon->resize(st::menuIconLinks.size());
 		const auto image = Ui::Earn::MenuIconCurrency(icon->size());
-		icon->paintRequest() | rpl::on_next([=] {
+		icon->paintRequest() | rpl::start_with_next([=] {
 			auto p = QPainter(icon);
 			p.drawImage(0, 0, image);
 		}, icon->lifetime());
 
 		button->sizeValue(
-		) | rpl::on_next([=](const QSize &size) {
+		) | rpl::start_with_next([=](const QSize &size) {
 			icon->moveToLeft(
 				button->st().iconLeft,
 				(size.height() - icon->height()) / 2);
@@ -1916,7 +1719,7 @@ void Controller::fillBotCreditsButton() {
 	auto &lifetime = _controls.buttonsLayout->lifetime();
 	const auto state = lifetime.make_state<State>();
 	if (const auto balance = _peer->session().credits().balance(_peer->id)) {
-		state->balance = Lang::FormatCreditsAmountDecimal(balance);
+		state->balance = Lang::FormatStarsAmountDecimal(balance);
 	}
 
 	const auto wrap = _controls.buttonsLayout->add(
@@ -1941,20 +1744,20 @@ void Controller::fillBotCreditsButton() {
 			if (data.balance) {
 				wrap->toggle(true, anim::type::normal);
 			}
-			state->balance = Lang::FormatCreditsAmountDecimal(data.balance);
+			state->balance = Lang::FormatStarsAmountDecimal(data.balance);
 		});
 	}
 	{
 		const auto icon = Ui::CreateChild<Ui::RpWidget>(button);
 		const auto image = Ui::Earn::MenuIconCredits();
 		icon->resize(image.size() / style::DevicePixelRatio());
-		icon->paintRequest() | rpl::on_next([=] {
+		icon->paintRequest() | rpl::start_with_next([=] {
 			auto p = QPainter(icon);
 			p.drawImage(0, 0, image);
 		}, icon->lifetime());
 
 		button->sizeValue(
-		) | rpl::on_next([=](const QSize &size) {
+		) | rpl::start_with_next([=](const QSize &size) {
 			icon->moveToLeft(
 				button->st().iconLeft,
 				(size.height() - icon->height()) / 2);
@@ -2089,13 +1892,11 @@ std::optional<Controller::Saving> Controller::validate() const {
 	auto result = Saving();
 	if (validateUsernamesOrder(result)
 		&& validateUsername(result)
-		&& validateDiscussionLink(result)
-		&& validateDirectMessagesPrice(result)
+		&& validateLinkedChat(result)
 		&& validateTitle(result)
 		&& validateDescription(result)
 		&& validateHistoryVisibility(result)
 		&& validateForum(result)
-		&& validateAutotranslate(result)
 		&& validateSignatures(result)
 		&& validateForwards(result)
 		&& validateJoinToWrite(result)
@@ -2132,19 +1933,11 @@ bool Controller::validateUsername(Saving &to) const {
 	return true;
 }
 
-bool Controller::validateDiscussionLink(Saving &to) const {
-	if (!_discussionLinkSavedValue) {
+bool Controller::validateLinkedChat(Saving &to) const {
+	if (!_linkedChatSavedValue) {
 		return true;
 	}
-	to.discussionLink = *_discussionLinkSavedValue;
-	return true;
-}
-
-bool Controller::validateDirectMessagesPrice(Saving &to) const {
-	if (!_starsPerDirectMessageSavedValue) {
-		return true;
-	}
-	to.starsPerDirectMessage = _starsPerDirectMessageSavedValue->current();
+	to.linkedChat = *_linkedChatSavedValue;
 	return true;
 }
 
@@ -2188,15 +1981,6 @@ bool Controller::validateForum(Saving &to) const {
 		return true;
 	}
 	to.forum = _forumSavedValue;
-	to.forumTabs = _forumTabsSavedValue;
-	return true;
-}
-
-bool Controller::validateAutotranslate(Saving &to) const {
-	if (!_autotranslateSavedValue.has_value()) {
-		return true;
-	}
-	to.autotranslate = _autotranslateSavedValue;
 	return true;
 }
 
@@ -2246,13 +2030,11 @@ void Controller::save() {
 		_savingData = *saving;
 		pushSaveStage([=] { saveUsernamesOrder(); });
 		pushSaveStage([=] { saveUsername(); });
-		pushSaveStage([=] { saveDiscussionLink(); });
-		pushSaveStage([=] { saveDirectMessagesPrice(); });
+		pushSaveStage([=] { saveLinkedChat(); });
 		pushSaveStage([=] { saveTitle(); });
 		pushSaveStage([=] { saveDescription(); });
 		pushSaveStage([=] { saveHistoryVisibility(); });
 		pushSaveStage([=] { saveForum(); });
-		pushSaveStage([=] { saveAutotranslate(); });
 		pushSaveStage([=] { saveSignatures(); });
 		pushSaveStage([=] { saveForwards(); });
 		pushSaveStage([=] { saveJoinToWrite(); });
@@ -2285,27 +2067,22 @@ void Controller::saveUsernamesOrder() {
 	}
 	if (_savingData.usernamesOrder->empty()) {
 		_api.request(MTPchannels_DeactivateAllUsernames(
-			channel->inputChannel()
+			channel->inputChannel
 		)).done([=] {
-			if (channel->editableUsername().isEmpty()) {
-				channel->setUsernames({});
-			} else {
-				channel->setUsernames({
+			channel->setUsernames(channel->editableUsername().isEmpty()
+				? Data::Usernames()
+				: Data::Usernames{
 					{ channel->editableUsername(), true, true }
 				});
-			}
 			continueSave();
 		}).send();
 	} else {
-		const auto weakContinue = crl::guard(this, [=] {
-			continueSave();
-		});
 		const auto lifetime = std::make_shared<rpl::lifetime>();
 		const auto newUsernames = (*_savingData.usernamesOrder);
 		_peer->session().api().usernames().reorder(
 			_peer,
 			newUsernames
-		) | rpl::on_done([=] {
+		) | rpl::start_with_done([=] {
 			channel->setUsernames(ranges::views::all(
 				newUsernames
 			) | ranges::views::transform([&](QString username) {
@@ -2317,7 +2094,7 @@ void Controller::saveUsernamesOrder() {
 					.editable = editable,
 				};
 			}) | ranges::to_vector);
-			weakContinue();
+			continueSave();
 			lifetime->destroy();
 		}, *lifetime);
 	}
@@ -2344,7 +2121,7 @@ void Controller::saveUsername() {
 
 	const auto newUsername = (*_savingData.username);
 	_api.request(MTPchannels_UpdateUsername(
-		channel->inputChannel(),
+		channel->inputChannel,
 		MTP_string(newUsername)
 	)).done([=] {
 		channel->setName(
@@ -2375,62 +2152,38 @@ void Controller::saveUsername() {
 	}).send();
 }
 
-void Controller::saveDiscussionLink() {
+void Controller::saveLinkedChat() {
 	const auto channel = _peer->asChannel();
 	if (!channel) {
 		return continueSave();
 	}
-	if (!_savingData.discussionLink
-		|| *_savingData.discussionLink == channel->discussionLink()) {
+	if (!_savingData.linkedChat
+		|| *_savingData.linkedChat == channel->linkedChat()) {
 		return continueSave();
 	}
 
-	const auto chat = *_savingData.discussionLink;
+	const auto chat = *_savingData.linkedChat;
 	if (channel->isBroadcast() && chat && chat->hiddenPreHistory()) {
 		togglePreHistoryHidden(
 			chat,
 			false,
-			[=] { saveDiscussionLink(); },
+			[=] { saveLinkedChat(); },
 			[=] { cancelSave(); });
 		return;
 	}
 
-	const auto input = *_savingData.discussionLink
-		? (*_savingData.discussionLink)->inputChannel()
+	const auto input = *_savingData.linkedChat
+		? (*_savingData.linkedChat)->inputChannel
 		: MTP_inputChannelEmpty();
 	_api.request(MTPchannels_SetDiscussionGroup(
-		(channel->isBroadcast() ? channel->inputChannel() : input),
-		(channel->isBroadcast() ? input : channel->inputChannel())
+		(channel->isBroadcast() ? channel->inputChannel : input),
+		(channel->isBroadcast() ? input : channel->inputChannel)
 	)).done([=] {
-		channel->setDiscussionLink(*_savingData.discussionLink);
+		channel->setLinkedChat(*_savingData.linkedChat);
 		continueSave();
-	}).fail([=](const MTP::Error &error) {
-		_navigation->showToast(error.type());
+	}).fail([=] {
 		cancelSave();
 	}).send();
-}
-
-void Controller::saveDirectMessagesPrice() {
-	const auto channel = _peer->asChannel();
-	if (!channel) {
-		return continueSave();
-	}
-	const auto current = CurrentPricePerDirectMessage(channel);
-	const auto desired = _savingData.starsPerDirectMessage
-		? *_savingData.starsPerDirectMessage
-		: current;
-	if (desired == current) {
-		return continueSave();
-	}
-	const auto show = _navigation->uiShow();
-	const auto done = [=](bool ok) {
-		if (ok) {
-			continueSave();
-		} else {
-			cancelSave();
-		}
-	};
-	SaveStarsPerMessage(show, channel, desired, crl::guard(this, done));
 }
 
 void Controller::saveTitle() {
@@ -2459,22 +2212,20 @@ void Controller::saveTitle() {
 		_controls.title->showError();
 		if (type == u"NO_CHAT_TITLE"_q) {
 			_box->scrollToWidget(_controls.title);
-		} else {
-			_navigation->showToast(type);
 		}
 		cancelSave();
 	};
 
 	if (const auto channel = _peer->asChannel()) {
 		_api.request(MTPchannels_EditTitle(
-			channel->inputChannel(),
+			channel->inputChannel,
 			MTP_string(*_savingData.title)
 		)).done(std::move(onDone)
 		).fail(std::move(onFail)
 		).send();
 	} else if (const auto chat = _peer->asChat()) {
 		_api.request(MTPmessages_EditChatTitle(
-			chat->inputChat(),
+			chat->inputChat,
 			MTP_string(*_savingData.title)
 		)).done(std::move(onDone)
 		).fail(std::move(onFail)
@@ -2482,7 +2233,7 @@ void Controller::saveTitle() {
 	} else if (_isBot) {
 		_api.request(MTPbots_GetBotInfo(
 			MTP_flags(MTPbots_GetBotInfo::Flag::f_bot),
-			_peer->asUser()->inputUser(),
+			_peer->asUser()->inputUser,
 			MTPstring() // Lang code.
 		)).done([=](const MTPbots_BotInfo &result) {
 			const auto was = qs(result.data().vname());
@@ -2493,7 +2244,7 @@ void Controller::saveTitle() {
 			using Flag = MTPbots_SetBotInfo::Flag;
 			_api.request(MTPbots_SetBotInfo(
 				MTP_flags(Flag::f_bot | Flag::f_name),
-				_peer->asUser()->inputUser(),
+				_peer->asUser()->inputUser,
 				MTPstring(), // Lang code.
 				MTP_string(now), // Name.
 				MTPstring(), // About.
@@ -2521,7 +2272,7 @@ void Controller::saveDescription() {
 	if (_isBot) {
 		_api.request(MTPbots_GetBotInfo(
 			MTP_flags(MTPbots_GetBotInfo::Flag::f_bot),
-			_peer->asUser()->inputUser(),
+			_peer->asUser()->inputUser,
 			MTPstring() // Lang code.
 		)).done([=](const MTPbots_BotInfo &result) {
 			const auto was = qs(result.data().vabout());
@@ -2532,16 +2283,15 @@ void Controller::saveDescription() {
 			using Flag = MTPbots_SetBotInfo::Flag;
 			_api.request(MTPbots_SetBotInfo(
 				MTP_flags(Flag::f_bot | Flag::f_about),
-				_peer->asUser()->inputUser(),
+				_peer->asUser()->inputUser,
 				MTPstring(), // Lang code.
 				MTPstring(), // Name.
 				MTP_string(now), // About.
 				MTPstring() // Description.
 			)).done([=] {
 				successCallback();
-			}).fail([=](const MTP::Error &error) {
+			}).fail([=] {
 				_controls.description->showError();
-				_navigation->showToast(error.type());
 				cancelSave();
 			}).send();
 		}).fail([=] {
@@ -2550,7 +2300,7 @@ void Controller::saveDescription() {
 		return;
 	}
 	_api.request(MTPmessages_EditChatAbout(
-		_peer->input(),
+		_peer->input,
 		MTP_string(*_savingData.description)
 	)).done([=] {
 		successCallback();
@@ -2561,7 +2311,6 @@ void Controller::saveDescription() {
 			return;
 		}
 		_controls.description->showError();
-		_navigation->showToast(type);
 		cancelSave();
 	}).send();
 }
@@ -2627,17 +2376,15 @@ void Controller::togglePreHistoryHidden(
 		done();
 	};
 	_api.request(MTPchannels_TogglePreHistoryHidden(
-		channel->inputChannel(),
+		channel->inputChannel,
 		MTP_bool(hidden)
 	)).done([=](const MTPUpdates &result) {
 		channel->session().api().applyUpdates(result);
 		apply();
 	}).fail([=](const MTP::Error &error) {
-		const auto type = error.type();
-		if (type == u"CHAT_NOT_MODIFIED"_q) {
+		if (error.type() == u"CHAT_NOT_MODIFIED"_q) {
 			apply();
 		} else {
-			_navigation->showToast(type);
 			fail();
 		}
 	}).send();
@@ -2645,13 +2392,8 @@ void Controller::togglePreHistoryHidden(
 
 void Controller::saveForum() {
 	const auto channel = _peer->asChannel();
-	const auto nowForum = _peer->isForum();
-	const auto nowForumTabs = !channel
-		|| !nowForum
-		|| channel->useSubsectionTabs();
 	if (!_savingData.forum
-		|| (*_savingData.forum == nowForum
-			&& *_savingData.forumTabs == nowForumTabs)) {
+		|| *_savingData.forum == _peer->isForum()) {
 		return continueSave();
 	} else if (!channel) {
 		const auto saveForChannel = [=](not_null<ChannelData*> channel) {
@@ -2667,9 +2409,8 @@ void Controller::saveForum() {
 		return;
 	}
 	_api.request(MTPchannels_ToggleForum(
-		channel->inputChannel(),
-		MTP_bool(*_savingData.forum),
-		MTP_bool(*_savingData.forum && *_savingData.forumTabs)
+		channel->inputChannel,
+		MTP_bool(*_savingData.forum)
 	)).done([=](const MTPUpdates &result) {
 		const auto weak = base::make_weak(this);
 		channel->session().api().applyUpdates(result);
@@ -2680,30 +2421,6 @@ void Controller::saveForum() {
 		if (error.type() == u"CHAT_NOT_MODIFIED"_q) {
 			continueSave();
 		} else {
-			_navigation->showToast(error.type());
-			cancelSave();
-		}
-	}).send();
-}
-
-void Controller::saveAutotranslate() {
-	const auto channel = _peer->asBroadcast();
-	if (!_savingData.autotranslate
-		|| !channel
-		|| (*_savingData.autotranslate == channel->autoTranslation())) {
-		return continueSave();
-	}
-	_api.request(MTPchannels_ToggleAutotranslation(
-		channel->inputChannel(),
-		MTP_bool(*_savingData.autotranslate)
-	)).done([=](const MTPUpdates &result) {
-		channel->session().api().applyUpdates(result);
-		continueSave();
-	}).fail([=](const MTP::Error &error) {
-		if (error.type() == u"CHAT_NOT_MODIFIED"_q) {
-			continueSave();
-		} else {
-			_navigation->showToast(error.type());
 			cancelSave();
 		}
 	}).send();
@@ -2730,7 +2447,7 @@ void Controller::saveSignatures() {
 			| (*_savingData.signatureProfiles
 				? Flag::f_profiles_enabled
 				: Flag())),
-		channel->inputChannel()
+		channel->inputChannel
 	)).done([=](const MTPUpdates &result) {
 		channel->session().api().applyUpdates(result);
 		continueSave();
@@ -2738,7 +2455,6 @@ void Controller::saveSignatures() {
 		if (error.type() == u"CHAT_NOT_MODIFIED"_q) {
 			continueSave();
 		} else {
-			_navigation->showToast(error.type());
 			cancelSave();
 		}
 	}).send();
@@ -2749,12 +2465,9 @@ void Controller::saveForwards() {
 		|| *_savingData.noForwards != _peer->allowsForwarding()) {
 		return continueSave();
 	}
-	using Flag = MTPmessages_ToggleNoForwards::Flag;
 	_api.request(MTPmessages_ToggleNoForwards(
-		MTP_flags(Flag()),
-		_peer->input(),
-		MTP_bool(*_savingData.noForwards),
-		MTPint()
+		_peer->input,
+		MTP_bool(*_savingData.noForwards)
 	)).done([=](const MTPUpdates &result) {
 		_peer->session().api().applyUpdates(result);
 		continueSave();
@@ -2762,7 +2475,6 @@ void Controller::saveForwards() {
 		if (error.type() == u"CHAT_NOT_MODIFIED"_q) {
 			continueSave();
 		} else {
-			_navigation->showToast(error.type());
 			cancelSave();
 		}
 	}).send();
@@ -2776,7 +2488,7 @@ void Controller::saveJoinToWrite() {
 		return continueSave();
 	}
 	_api.request(MTPchannels_ToggleJoinToSend(
-		_peer->asChannel()->inputChannel(),
+		_peer->asChannel()->inputChannel,
 		MTP_bool(*_savingData.joinToWrite)
 	)).done([=](const MTPUpdates &result) {
 		_peer->session().api().applyUpdates(result);
@@ -2785,7 +2497,6 @@ void Controller::saveJoinToWrite() {
 		if (error.type() == u"CHAT_NOT_MODIFIED"_q) {
 			continueSave();
 		} else {
-			_navigation->showToast(error.type());
 			cancelSave();
 		}
 	}).send();
@@ -2799,7 +2510,7 @@ void Controller::saveRequestToJoin() {
 		return continueSave();
 	}
 	_api.request(MTPchannels_ToggleJoinRequest(
-		_peer->asChannel()->inputChannel(),
+		_peer->asChannel()->inputChannel,
 		MTP_bool(*_savingData.requestToJoin)
 	)).done([=](const MTPUpdates &result) {
 		_peer->session().api().applyUpdates(result);
@@ -2808,7 +2519,6 @@ void Controller::saveRequestToJoin() {
 		if (error.type() == u"CHAT_NOT_MODIFIED"_q) {
 			continueSave();
 		} else {
-			_navigation->showToast(error.type());
 			cancelSave();
 		}
 	}).send();
@@ -2859,7 +2569,7 @@ void Controller::deleteChannel() {
 		session->api().deleteConversation(chat, false);
 	}
 	session->api().request(MTPchannels_DeleteChannel(
-		channel->inputChannel()
+		channel->inputChannel
 	)).done([=](const MTPUpdates &result) {
 		session->api().applyUpdates(result);
 	//}).fail([=](const MTP::Error &error) {
@@ -2887,7 +2597,7 @@ void EditPeerInfoBox::prepare() {
 		this,
 		_peer);
 	_focusRequests.events(
-	) | rpl::on_next(
+	) | rpl::start_with_next(
 		[=] { controller->setFocus(); },
 		lifetime());
 	auto content = controller->createContent();
@@ -2901,22 +2611,6 @@ object_ptr<Ui::SettingsButton> EditPeerInfoBox::CreateButton(
 		not_null<QWidget*> parent,
 		rpl::producer<QString> &&text,
 		rpl::producer<QString> &&count,
-		Fn<void()> callback,
-		const style::SettingsCountButton &st,
-		Settings::IconDescriptor &&descriptor) {
-	return CreateButton(
-		parent,
-		std::move(text),
-		std::move(count) | rpl::map(tr::marked),
-		std::move(callback),
-		st,
-		std::move(descriptor));
-}
-
-object_ptr<Ui::SettingsButton> EditPeerInfoBox::CreateButton(
-		not_null<QWidget*> parent,
-		rpl::producer<QString> &&text,
-		rpl::producer<TextWithEntities> &&labelText,
 		Fn<void()> callback,
 		const style::SettingsCountButton &st,
 		Settings::IconDescriptor &&descriptor) {
@@ -2940,49 +2634,37 @@ object_ptr<Ui::SettingsButton> EditPeerInfoBox::CreateButton(
 			std::move(descriptor));
 	}
 
-	const auto label = Ui::CreateChild<Ui::FlatLabel>(
-		button,
-		rpl::duplicate(labelText),
-		st.label);
-	label->setAttribute(Qt::WA_TransparentForMouseEvents);
-	label->show();
-
-	rpl::combine(
+	auto labelText = rpl::combine(
 		rpl::duplicate(text),
-		std::move(labelText),
+		std::move(count),
 		button->widthValue()
-	) | rpl::on_next([&st, label](
-			const QString &text,
-			const TextWithEntities &labelText,
-			int width) {
+	) | rpl::map([&st](const QString &text, const QString &count, int width) {
 		const auto available = width
 			- st.button.padding.left()
 			- (st.button.style.font->spacew * 2)
 			- st.button.style.font->width(text)
 			- st.labelPosition.x();
-		const auto required = label->textMaxWidth();
-		label->resizeToWidth(std::min(required, available));
-		label->moveToRight(
-			st.labelPosition.x(),
-			st.labelPosition.y(),
-			width);
-	}, label->lifetime());
+		const auto required = st.label.style.font->width(count);
+		return (required > available)
+			? st.label.style.font->elided(count, std::max(available, 0))
+			: count;
+	});
 
 	if (badge) {
 		rpl::combine(
 			std::move(text),
-			label->widthValue(),
+			rpl::duplicate(labelText),
 			button->widthValue()
-		) | rpl::on_next([=](
+		) | rpl::start_with_next([=](
 				const QString &text,
-				int labelWidth,
+				const QString &label,
 				int width) {
 			const auto space = st.button.style.font->spacew;
 			const auto left = st.button.padding.left()
 				+ st.button.style.font->width(text)
 				+ space;
 			const auto right = st.labelPosition.x()
-				+ labelWidth
+				+ st.label.style.font->width(label)
 				+ (space * 2);
 			const auto available = width - left - right;
 			badge->setVisible(available >= badge->width());
@@ -2995,6 +2677,23 @@ object_ptr<Ui::SettingsButton> EditPeerInfoBox::CreateButton(
 			}
 		}, badge->lifetime());
 	}
+
+	const auto label = Ui::CreateChild<Ui::FlatLabel>(
+		button,
+		std::move(labelText),
+		st.label);
+	label->setAttribute(Qt::WA_TransparentForMouseEvents);
+	label->show();
+
+	rpl::combine(
+		button->widthValue(),
+		label->widthValue()
+	) | rpl::start_with_next([=, &st](int outerWidth, int width) {
+		label->moveToRight(
+			st.labelPosition.x(),
+			st.labelPosition.y(),
+			outerWidth);
+	}, label->lifetime());
 
 	return result;
 }
@@ -3012,9 +2711,7 @@ bool EditPeerInfoBox::Available(not_null<PeerData*> peer) {
 
 		// canViewAdmins() is removed, because in supergroups it is
 		// always true and in channels it is equal to canViewBanned().
-		if (channel->isMonoforum()) {
-			return false;
-		}
+
 		return false
 			//|| channel->canViewMembers()
 			//|| channel->canViewAdmins()

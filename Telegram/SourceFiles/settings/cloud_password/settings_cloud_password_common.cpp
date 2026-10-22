@@ -53,11 +53,11 @@ BottomButton CreateBottomDisableButton(
 
 	Ui::AddSkip(content);
 
-	const auto button = content->add(object_ptr<Button>(
+	content->add(object_ptr<Button>(
 		content,
 		std::move(buttonText),
-		st::settingsAttentionButton));
-	button->addClickHandler(std::move(callback));
+		st::settingsAttentionButton
+	))->addClickHandler(std::move(callback));
 
 	const auto divider = Ui::CreateChild<OneEdgeBoxContentDivider>(
 		parent.get());
@@ -66,7 +66,7 @@ BottomButton CreateBottomDisableButton(
 		std::move(sectionGeometryValue),
 		parent->geometryValue(),
 		content->geometryValue()
-	) | rpl::on_next([=](
+	) | rpl::start_with_next([=](
 			const QRect &r,
 			const QRect &parentRect,
 			const QRect &bottomRect) {
@@ -80,8 +80,7 @@ BottomButton CreateBottomDisableButton(
 	divider->show();
 
 	return {
-		.content = base::make_weak(content),
-		.button = base::make_weak(button),
+		.content = Ui::MakeWeak(not_null<Ui::RpWidget*>{ content }),
 		.isBottomFillerShown = divider->geometryValue(
 		) | rpl::map([](const QRect &r) {
 			return r.height() > 0;
@@ -120,32 +119,36 @@ void SetupHeader(
 		content->add(std::move(icon.widget));
 		std::move(
 			showFinished
-		) | rpl::on_next([animate = std::move(icon.animate)] {
+		) | rpl::start_with_next([animate = std::move(icon.animate)] {
 			animate(anim::repeat::once);
 		}, content->lifetime());
 	}
 	Ui::AddSkip(content);
 
 	content->add(
-		object_ptr<Ui::FlatLabel>(
+		object_ptr<Ui::CenterWrap<>>(
 			content,
-			std::move(subtitle),
-			st::changePhoneTitle),
-		st::changePhoneTitlePadding,
-		style::al_top);
+			object_ptr<Ui::FlatLabel>(
+				content,
+				std::move(subtitle),
+				st::changePhoneTitle)),
+		st::changePhoneTitlePadding);
 
 	{
 		const auto &st = st::settingLocalPasscodeDescription;
-		const auto description = content->add(
-			object_ptr<Ui::FlatLabel>(
+		const auto wrap = content->add(
+			object_ptr<Ui::CenterWrap<>>(
 				content,
-				v::text::take_marked(std::move(about)),
-				st,
-				st::defaultPopupMenu),
-			st::changePhoneDescriptionPadding,
-			style::al_top);
-		description->setTryMakeSimilarLines(true);
-		description->setAttribute(Qt::WA_TransparentForMouseEvents);
+				object_ptr<Ui::FlatLabel>(
+					content,
+					v::text::take_marked(std::move(about)),
+					st,
+					st::defaultPopupMenu)),
+			st::changePhoneDescriptionPadding);
+		wrap->setAttribute(Qt::WA_TransparentForMouseEvents);
+		wrap->resize(
+			wrap->width(),
+			st::settingLocalPasscodeDescriptionHeight);
 	}
 }
 
@@ -163,7 +166,7 @@ not_null<Ui::PasswordInput*> AddPasswordField(
 		text);
 
 	container->geometryValue(
-	) | rpl::on_next([=](const QRect &r) {
+	) | rpl::start_with_next([=](const QRect &r) {
 		field->moveToLeft((r.width() - field->width()) / 2, 0);
 	}, container->lifetime());
 
@@ -171,33 +174,34 @@ not_null<Ui::PasswordInput*> AddPasswordField(
 	return field;
 }
 
-not_null<Ui::InputField*> AddWrappedField(
+not_null<Ui::CenterWrap<Ui::InputField>*> AddWrappedField(
 		not_null<Ui::VerticalLayout*> content,
 		rpl::producer<QString> &&placeholder,
 		const QString &text) {
-	return content->add(
+	return content->add(object_ptr<Ui::CenterWrap<Ui::InputField>>(
+		content,
 		object_ptr<Ui::InputField>(
 			content,
 			st::settingLocalPasscodeInputField,
 			std::move(placeholder),
-			text),
-		style::al_top);
+			text)));
 }
 
 not_null<Ui::LinkButton*> AddLinkButton(
-		not_null<Ui::InputField*> input,
+		not_null<Ui::CenterWrap<Ui::InputField>*> wrap,
 		rpl::producer<QString> &&text) {
 	const auto button = Ui::CreateChild<Ui::LinkButton>(
-		input->parentWidget(),
+		wrap->parentWidget(),
 		QString());
 	std::move(
 		text
-	) | rpl::on_next([=](const QString &text) {
+	) | rpl::start_with_next([=](const QString &text) {
 		button->setText(text);
 	}, button->lifetime());
 
-	input->geometryValue(
-	) | rpl::on_next([=](QRect r) {
+	wrap->geometryValue(
+	) | rpl::start_with_next([=](QRect r) {
+		r.translate(wrap->entity()->pos().x(), 0);
 		button->moveToLeft(r.x(), r.y() + r.height() + st::passcodeTextLine);
 	}, button->lifetime());
 	return button;
@@ -207,12 +211,14 @@ not_null<Ui::FlatLabel*> AddError(
 		not_null<Ui::VerticalLayout*> content,
 		Ui::PasswordInput *input) {
 	const auto error = content->add(
-		object_ptr<Ui::FlatLabel>(
+		object_ptr<Ui::CenterWrap<Ui::FlatLabel>>(
 			content,
-			QString(),
-			st::settingLocalPasscodeError),
-		st::changePhoneDescriptionPadding,
-		style::al_top);
+			object_ptr<Ui::FlatLabel>(
+				content,
+				// Set any text to resize.
+				tr::lng_language_name(tr::now),
+				st::settingLocalPasscodeError)),
+		st::changePhoneDescriptionPadding)->entity();
 	error->hide();
 	if (input) {
 		QObject::connect(input, &Ui::MaskedInputField::changed, [=] {
@@ -226,12 +232,13 @@ not_null<Ui::RoundButton*> AddDoneButton(
 		not_null<Ui::VerticalLayout*> content,
 		rpl::producer<QString> &&text) {
 	const auto button = content->add(
-		object_ptr<Ui::RoundButton>(
+		object_ptr<Ui::CenterWrap<Ui::RoundButton>>(
 			content,
-			std::move(text),
-			st::changePhoneButton),
-		st::settingLocalPasscodeButtonPadding,
-		style::al_top);
+			object_ptr<Ui::RoundButton>(
+				content,
+				std::move(text),
+				st::changePhoneButton)),
+		st::settingLocalPasscodeButtonPadding)->entity();
 	button->setTextTransform(Ui::RoundButton::TextTransform::NoTransform);
 	return button;
 }

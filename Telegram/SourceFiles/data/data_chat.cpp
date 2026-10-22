@@ -27,9 +27,10 @@ using UpdateFlag = Data::PeerUpdate::Flag;
 } // namespace
 
 ChatData::ChatData(not_null<Data::Session*> owner, PeerId id)
-: PeerData(owner, id) {
+: PeerData(owner, id)
+, inputChat(MTP_long(peerToChat(id).bare)) {
 	_flags.changes(
-	) | rpl::on_next([=](const Flags::Change &change) {
+	) | rpl::start_with_next([=](const Flags::Change &change) {
 		if (change.diff & Flag::CallNotEmpty) {
 			if (const auto history = this->owner().historyLoaded(this)) {
 				history->updateChatListEntry();
@@ -233,13 +234,10 @@ void ChatData::setGroupCall(
 			data.vid().v,
 			data.vaccess_hash().v,
 			scheduleDate,
-			rtmp,
-			Data::GroupCallOrigin::Group);
+			rtmp);
 		owner().registerGroupCall(_call.get());
 		session().changes().peerUpdated(this, UpdateFlag::GroupCall);
 		addFlags(Flag::CallActive);
-	}, [&](const auto &) {
-		clearGroupCall();
 	});
 }
 
@@ -310,10 +308,6 @@ void ChatData::setAllowedReactions(Data::AllowedReactions value) {
 
 const Data::AllowedReactions &ChatData::allowedReactions() const {
 	return _allowedReactions;
-}
-
-MTPlong ChatData::inputChat() const {
-	return MTP_long(peerToChat(id).bare);
 }
 
 namespace Data {
@@ -439,32 +433,6 @@ void ApplyChatUpdate(
 
 void ApplyChatUpdate(
 		not_null<ChatData*> chat,
-		const MTPDupdateChatParticipantRank &update) {
-	if (chat->applyUpdateVersion(update.vversion().v)
-		!= ChatData::UpdateStatus::Good) {
-		return;
-	}
-	const auto rank = qs(update.vrank().v);
-	const auto userId = UserId(update.vuser_id().v);
-	if (rank.isEmpty()) {
-		chat->memberRanks.remove(userId);
-	} else {
-		chat->memberRanks[userId] = rank;
-	}
-	if (userId != chat->session().userId()) {
-		if (const auto history = chat->owner().historyLoaded(chat)) {
-			auto changes = base::flat_set<UserId>();
-			changes.emplace(userId);
-			history->applyGroupAdminChanges(changes);
-		}
-	}
-	chat->session().changes().peerUpdated(
-		chat,
-		Data::PeerUpdate::Flag::Members);
-}
-
-void ApplyChatUpdate(
-		not_null<ChatData*> chat,
 		const MTPDupdateChatDefaultBannedRights &update) {
 	if (chat->applyUpdateVersion(update.vversion().v)
 		!= ChatData::UpdateStatus::Good) {
@@ -515,7 +483,7 @@ void ApplyChatUpdate(not_null<ChatData*> chat, const MTPDchatFull &update) {
 		SetTopPinnedMessageId(chat, pinned->v);
 	}
 	chat->checkFolder(update.vfolder_id().value_or_empty());
-	chat->setThemeToken(qs(update.vtheme_emoticon().value_or_empty()));
+	chat->setThemeEmoji(qs(update.vtheme_emoticon().value_or_empty()));
 	chat->setTranslationDisabled(update.is_translations_disabled());
 	const auto reactionsLimit = update.vreactions_limit().value_or_empty();
 	if (const auto allowed = update.vavailable_reactions()) {
@@ -558,7 +526,6 @@ void ApplyChatUpdate(
 		chat->participants.clear();
 		chat->invitedByMe.clear();
 		chat->admins.clear();
-		chat->memberRanks.clear();
 		chat->setAdminRights(ChatAdminRights());
 		const auto selfUserId = session->userId();
 		for (const auto &participant : list) {
@@ -585,25 +552,13 @@ void ApplyChatUpdate(
 
 			participant.match([&](const MTPDchatParticipantCreator &data) {
 				chat->creator = userId;
-				const auto rank = qs(data.vrank().value_or_empty());
-				if (!rank.isEmpty()) {
-					chat->memberRanks[userId] = rank;
-				}
 			}, [&](const MTPDchatParticipantAdmin &data) {
 				chat->admins.emplace(user);
 				if (user->isSelf()) {
 					chat->setAdminRights(
 						chat->defaultAdminRights(user).flags);
 				}
-				const auto rank = qs(data.vrank().value_or_empty());
-				if (!rank.isEmpty()) {
-					chat->memberRanks[userId] = rank;
-				}
-			}, [&](const MTPDchatParticipant &data) {
-				const auto rank = qs(data.vrank().value_or_empty());
-				if (!rank.isEmpty()) {
-					chat->memberRanks[userId] = rank;
-				}
+			}, [](const MTPDchatParticipant &) {
 			});
 		}
 		if (chat->participants.empty()) {

@@ -7,7 +7,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
-class ChannelData;
 class PeerData;
 
 namespace Data {
@@ -22,10 +21,6 @@ class Account;
 class Session;
 } // namespace Main
 
-namespace Storage {
-enum class SharedMediaType : signed char;
-} // namespace Storage
-
 namespace Window {
 
 enum class SeparateType {
@@ -37,9 +32,21 @@ enum class SeparateType {
 	SharedMedia,
 };
 
+enum class SeparateSharedMediaType {
+	None,
+	Photos,
+	Videos,
+	Files,
+	Audio,
+	Links,
+	Voices,
+	GIF,
+};
+
 struct SeparateSharedMedia {
-	not_null<Data::Thread*> thread;
-	Storage::SharedMediaType type = {};
+	SeparateSharedMediaType type = SeparateSharedMediaType::None;
+	not_null<PeerData*> peer;
+	MsgId topicRootId = MsgId();
 };
 
 struct SeparateId {
@@ -49,14 +56,15 @@ struct SeparateId {
 	SeparateId(SeparateType type, not_null<Data::Thread*> thread);
 	SeparateId(not_null<Data::Thread*> thread);
 	SeparateId(not_null<PeerData*> peer);
-	SeparateId(
-		not_null<Data::Thread*> thread,
-		Storage::SharedMediaType sharedMediaType);
+	SeparateId(SeparateSharedMedia data);
 
 	SeparateType type = SeparateType::Primary;
-	Storage::SharedMediaType sharedMediaType = {};
+	SeparateSharedMediaType sharedMedia = SeparateSharedMediaType::None;
 	Main::Account *account = nullptr;
 	Data::Thread *thread = nullptr; // For types except Main and Archive.
+	PeerData *sharedMediaDataPeer = nullptr;
+	MsgId sharedMediaDataTopicRootId = MsgId();
+
 	[[nodiscard]] bool valid() const {
 		return account != nullptr;
 	}
@@ -69,6 +77,8 @@ struct SeparateId {
 	[[nodiscard]] Data::Forum *forum() const;
 	[[nodiscard]] Data::Folder *folder() const;
 	[[nodiscard]] Data::SavedSublist *sublist() const;
+	[[nodiscard]] PeerData *sharedMediaPeer() const;
+	[[nodiscard]] MsgId sharedMediaTopicRootId() const;
 
 	[[nodiscard]] bool hasChatsList() const;
 

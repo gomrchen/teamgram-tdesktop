@@ -29,10 +29,6 @@ namespace Ui {
 class IconButton;
 class ScrollArea;
 class CalendarBox;
-class DynamicImage;
-
-using CalendarImageSetter = Fn<void(QDate, std::shared_ptr<DynamicImage>)>;
-using JumpCallback = Fn<void(QDate date, Fn<void()> close)>;
 
 struct CalendarBoxArgs {
 	template <typename T>
@@ -40,7 +36,7 @@ struct CalendarBoxArgs {
 
 	required<QDate> month;
 	required<QDate> highlighted;
-	required<JumpCallback> callback;
+	required<Fn<void(QDate date)>> callback;
 	FnMut<void(not_null<CalendarBox*>)> finalize;
 	const style::CalendarSizes &st = st::defaultCalendarSizes;
 	QDate minDate;
@@ -50,8 +46,6 @@ struct CalendarBoxArgs {
 		not_null<Ui::CalendarBox*>,
 		std::optional<int>)> selectionChanged;
 	const style::CalendarColors &stColors = st::defaultCalendarColors;
-	Fn<void(QDate, CalendarImageSetter)> dynamicImageForDate;
-	bool requireImage = false;
 };
 
 class CalendarBox final : public BoxContent, private AbstractTooltipShower {
@@ -63,8 +57,6 @@ public:
 
 	[[nodiscard]] QDate selectedFirstDate() const;
 	[[nodiscard]] QDate selectedLastDate() const;
-
-	void setDynamicImage(QDate date, std::shared_ptr<DynamicImage> image);
 
 protected:
 	void prepare() override;
@@ -113,7 +105,7 @@ private:
 	bool _previousEnabled = false;
 	bool _nextEnabled = false;
 
-	JumpCallback _callback;
+	Fn<void(QDate date)> _callback;
 	FnMut<void(not_null<CalendarBox*>)> _finalize;
 	bool _watchScroll = false;
 

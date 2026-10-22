@@ -93,7 +93,6 @@ DragArea::Areas DragArea::SetupDragAreaToContainer(
 			moveToTop(attachDragDocument);
 		break;
 		case DragState::PhotoFiles:
-		case DragState::MediaFiles:
 			attachDragDocument->resize(
 				width() - horizontalMargins,
 				(height() - verticalMargins) / 2);
@@ -148,20 +147,6 @@ DragArea::Areas DragArea::SetupDragAreaToContainer(
 			attachDragDocument->otherEnter();
 			attachDragPhoto->otherEnter();
 		break;
-		case DragState::MediaFiles:
-			attachDragDocument->setText(
-				tr::lng_drag_files_here(tr::now),
-				hideSubtext
-					? QString()
-					: tr::lng_drag_to_send_files(tr::now));
-			attachDragPhoto->setText(
-				tr::lng_drag_media_here(tr::now),
-				hideSubtext
-					? QString()
-					: tr::lng_drag_to_send_media(tr::now));
-			attachDragDocument->otherEnter();
-			attachDragPhoto->otherEnter();
-		break;
 		case DragState::Image:
 			attachDragPhoto->setText(
 				tr::lng_drag_images_here(tr::now),
@@ -175,7 +160,7 @@ DragArea::Areas DragArea::SetupDragAreaToContainer(
 	};
 
 	container->sizeValue(
-	) | rpl::on_next(updateAttachGeometry, lifetime);
+	) | rpl::start_with_next(updateAttachGeometry, lifetime);
 
 	const auto resetDragStateIfNeeded = [=] {
 		if (*attachDragState != DragState::None
@@ -235,7 +220,7 @@ DragArea::Areas DragArea::SetupDragAreaToContainer(
 	container->events(
 	) | rpl::filter([=](not_null<QEvent*> event) {
 		return ranges::contains(kDragAreaEvents, event->type());
-	}) | rpl::on_next([=](not_null<QEvent*> event) {
+	}) | rpl::start_with_next([=](not_null<QEvent*> event) {
 		const auto type = event->type();
 
 		if (processDragEvents(event)) {

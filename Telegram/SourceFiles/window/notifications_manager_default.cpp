@@ -23,7 +23,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/painter.h"
 #include "ui/power_saving.h"
 #include "ui/ui_utility.h"
-#include "data/data_saved_sublist.h"
 #include "data/data_session.h"
 #include "data/data_forum_topic.h"
 #include "data/stickers/data_custom_emoji.h"
@@ -51,7 +50,10 @@ namespace {
 
 [[nodiscard]] QPoint notificationStartPosition() {
 	const auto corner = Core::App().settings().notificationsCorner();
-	const auto r = NotificationDisplayRect(Core::App().activePrimaryWindow());
+	const auto window = Core::App().activePrimaryWindow();
+	const auto r = window
+		? window->widget()->desktopRect()
+		: QGuiApplication::primaryScreen()->availableGeometry();
 	const auto isLeft = Core::Settings::IsLeftCorner(corner);
 	const auto isTop = Core::Settings::IsTopCorner(corner);
 	const auto x = (isLeft == rtl())
@@ -76,7 +78,7 @@ Manager::Manager(System *system)
 : Notifications::Manager(system)
 , _inputCheckTimer([=] { checkLastInput(); }) {
 	system->settingsChanged(
-	) | rpl::on_next([=](ChangeType change) {
+	) | rpl::start_with_next([=](ChangeType change) {
 		settingsChanged(change);
 	}, _lifetime);
 }
@@ -234,7 +236,6 @@ void Manager::showNextFromQueue() {
 			this,
 			queued.history,
 			queued.topicRootId,
-			queued.monoforumPeerId,
 			queued.peer,
 			queued.author,
 			queued.item,
@@ -256,14 +257,14 @@ void Manager::subscribeToSession(not_null<Main::Session*> session) {
 	if (i == _subscriptions.end()) {
 		i = _subscriptions.emplace(session).first;
 		session->account().sessionChanges(
-		) | rpl::on_next([=] {
+		) | rpl::start_with_next([=] {
 			_subscriptions.remove(session);
 		}, i->second.lifetime);
 	} else if (i->second.subscription) {
 		return;
 	}
 	session->downloaderTaskFinished(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		auto found = false;
 		for (const auto &notification : _notifications) {
 			if (const auto history = notification->maybeHistory()) {
@@ -382,25 +383,7 @@ void Manager::doClearFromTopic(not_null<Data::ForumTopic*> topic) {
 		}
 	}
 	for (const auto &notification : _notifications) {
-		if (notification->unlinkHistory(history, topicRootId, PeerId())) {
-			_positionsOutdated = true;
-		}
-	}
-	showNextFromQueue();
-}
-
-void Manager::doClearFromSublist(not_null<Data::SavedSublist*> sublist) {
-	const auto history = sublist->owningHistory();
-	const auto sublistPeerId = sublist->sublistPeer()->id;
-	for (auto i = _queuedNotifications.begin(); i != _queuedNotifications.cend();) {
-		if (i->history == history && i->monoforumPeerId == sublistPeerId) {
-			i = _queuedNotifications.erase(i);
-		} else {
-			++i;
-		}
-	}
-	for (const auto &notification : _notifications) {
-		if (notification->unlinkHistory(history, MsgId(), sublistPeerId)) {
+		if (notification->unlinkHistory(history, topicRootId)) {
 			_positionsOutdated = true;
 		}
 	}
@@ -618,7 +601,7 @@ QPoint Widget::computePosition(int height) const {
 	return QPoint(_startPosition.x(), _startPosition.y() + realShift);
 }
 
-Background::Background(QWidget *parent) : RpWidget(parent) {
+Background::Background(QWidget *parent) : TWidget(parent) {
 	setAttribute(Qt::WA_OpaquePaintEvent);
 }
 
@@ -635,7 +618,6 @@ Notification::Notification(
 	not_null<Manager*> manager,
 	not_null<History*> history,
 	MsgId topicRootId,
-	PeerId monoforumPeerId,
 	not_null<PeerData*> peer,
 	const QString &author,
 	HistoryItem *item,
@@ -651,9 +633,7 @@ Notification::Notification(
 , _history(history)
 , _topic(history->peer->forumTopicFor(topicRootId))
 , _topicRootId(topicRootId)
-, _sublist(history->peer->monoforumSublistFor(monoforumPeerId))
-, _monoforumPeerId(monoforumPeerId)
-, _userpicView(_peer->userpicPaintingPeer()->createUserpicView())
+, _userpicView(_peer->createUserpicView())
 , _author(author)
 , _reaction(reaction)
 , _item(item)
@@ -662,13 +642,13 @@ Notification::Notification(
 , _close(this, st::notifyClose)
 , _reply(this, tr::lng_notification_reply(), st::defaultBoxButton) {
 	Lang::Updated(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		refreshLang();
 	}, lifetime());
 
 	if (_topic) {
 		_topic->destroyed(
-		) | rpl::on_next([=] {
+		) | rpl::start_with_next([=] {
 			unlinkHistory();
 		}, lifetime());
 	}
@@ -699,7 +679,7 @@ Notification::Notification(
 	prepareActionsCache();
 
 	style::PaletteChanged(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		updateNotifyDisplay();
 		if (!_buttonsCache.isNull()) {
 			prepareActionsCache();
@@ -1003,7 +983,7 @@ void Notification::updateNotifyDisplay() {
 		auto title = options.hideNameAndPhoto
 			? TextWithEntities{ u"Teamgram Desktop"_q }
 			: reminder
-			? tr::lng_notification_reminder(tr::now, tr::marked)
+			? tr::lng_notification_reminder(tr::now, Ui::Text::WithEntities)
 			: topicWithChat();
 		const auto fullTitle = manager()->addTargetAccountName(
 			std::move(title),
@@ -1123,13 +1103,13 @@ void Notification::showReplyField() {
 	// Catch mouse press event to activate the window.
 	QCoreApplication::instance()->installEventFilter(this);
 	_replyArea->heightChanges(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		replyResized();
 	}, _replyArea->lifetime());
 	_replyArea->submits(
-	) | rpl::on_next([=] { sendReply(); }, _replyArea->lifetime());
+	) | rpl::start_with_next([=] { sendReply(); }, _replyArea->lifetime());
 	_replyArea->cancelled(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		replyCancel();
 	}, _replyArea->lifetime());
 
@@ -1169,14 +1149,10 @@ void Notification::changeHeight(int newHeight) {
 	manager()->changeNotificationHeight(this, newHeight);
 }
 
-bool Notification::unlinkHistory(
-		History *history,
-		MsgId topicRootId,
-		PeerId monoforumPeerId) {
+bool Notification::unlinkHistory(History *history, MsgId topicRootId) {
 	const auto unlink = _history
 		&& (history == _history || !history)
-		&& (topicRootId == _topicRootId || !topicRootId)
-		&& (monoforumPeerId == _monoforumPeerId || !monoforumPeerId);
+		&& (topicRootId == _topicRootId || !topicRootId);
 	if (unlink) {
 		hideFast();
 		_history = nullptr;
@@ -1226,9 +1202,7 @@ void Notification::mousePressEvent(QMouseEvent *e) {
 		unlinkHistoryInManager();
 	} else {
 		e->ignore();
-		manager()->notificationActivated(myId(), {
-			.allowNewWindow = true,
-		});
+		manager()->notificationActivated(myId());
 	}
 }
 
@@ -1262,7 +1236,7 @@ HideAllButton::HideAllButton(
 	updateGeometry(position.x(), position.y(), st::notifyWidth, st::notifyHideAllHeight);
 
 	style::PaletteChanged(
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		update();
 	}, lifetime());
 

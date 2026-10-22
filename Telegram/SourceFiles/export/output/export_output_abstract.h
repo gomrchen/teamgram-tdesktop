@@ -16,8 +16,6 @@ struct UserpicsInfo;
 struct UserpicsSlice;
 struct StoriesInfo;
 struct StoriesSlice;
-struct ProfileMusicInfo;
-struct ProfileMusicSlice;
 struct ContactsList;
 struct SessionsList;
 struct DialogsInfo;
@@ -65,12 +63,6 @@ public:
 	[[nodiscard]] virtual Result writeStoriesSlice(
 		const Data::StoriesSlice &data) = 0;
 	[[nodiscard]] virtual Result writeStoriesEnd() = 0;
-
-	[[nodiscard]] virtual Result writeProfileMusicStart(
-		const Data::ProfileMusicInfo &data) = 0;
-	[[nodiscard]] virtual Result writeProfileMusicSlice(
-		const Data::ProfileMusicSlice &data) = 0;
-	[[nodiscard]] virtual Result writeProfileMusicEnd() = 0;
 
 	[[nodiscard]] virtual Result writeContactsList(
 		const Data::ContactsList &data) = 0;

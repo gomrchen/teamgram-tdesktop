@@ -15,7 +15,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_session.h"
 #include "lang/lang_keys.h"
 #include "ui/painter.h"
-#include "ui/rect.h"
 #include "ui/power_saving.h"
 #include "ui/unread_badge_paint.h"
 #include "styles/style_dialogs.h"
@@ -72,17 +71,10 @@ void UnreadBadge::paintEvent(QPaintEvent *e) {
 		unreadSt);
 }
 
-QString TextBadgeText(TextBadgeType type) {
-	switch (type) {
-	case TextBadgeType::Fake: return tr::lng_fake_badge(tr::now);
-	case TextBadgeType::Scam: return tr::lng_scam_badge(tr::now);
-	case TextBadgeType::Direct: return tr::lng_direct_badge(tr::now);
-	}
-	Unexpected("Type in TextBadgeText.");
-}
-
-QSize TextBadgeSize(TextBadgeType type) {
-	const auto phrase = TextBadgeText(type);
+QSize ScamBadgeSize(bool fake) {
+	const auto phrase = fake
+		? tr::lng_fake_badge(tr::now)
+		: tr::lng_scam_badge(tr::now);
 	const auto phraseWidth = st::dialogsScamFont->width(phrase);
 	const auto width = st::dialogsScamPadding.left()
 		+ phraseWidth
@@ -93,7 +85,7 @@ QSize TextBadgeSize(TextBadgeType type) {
 	return { width, height };
 }
 
-void DrawTextBadge(
+void DrawScamFakeBadge(
 		Painter &p,
 		QRect rect,
 		int outerWidth,
@@ -107,33 +99,24 @@ void DrawTextBadge(
 	p.setBrush(Qt::NoBrush);
 	p.drawRoundedRect(rect, st::dialogsScamRadius, st::dialogsScamRadius);
 	p.setFont(st::dialogsScamFont);
-	if (style::DevicePixelRatio() > 1) {
-		p.drawText(
-			QRect(
-				rect.x() + st::dialogsScamPadding.left(),
-				rect.y() + st::dialogsScamPadding.top(),
-				rect.width() - rect::m::sum::h(st::dialogsScamPadding),
-				rect.height() - rect::m::sum::v(st::dialogsScamPadding)),
-			Qt::AlignCenter,
-			phrase);
-	} else {
-		p.drawTextLeft(
-			rect.x() + st::dialogsScamPadding.left(),
-			rect.y() + st::dialogsScamPadding.top(),
-			outerWidth,
-			phrase,
-			phraseWidth);
-	}
+	p.drawTextLeft(
+		rect.x() + st::dialogsScamPadding.left(),
+		rect.y() + st::dialogsScamPadding.top(),
+		outerWidth,
+		phrase,
+		phraseWidth);
 }
 
-void DrawTextBadge(
-		TextBadgeType type,
+void DrawScamBadge(
+		bool fake,
 		Painter &p,
 		QRect rect,
 		int outerWidth,
 		const style::color &color) {
-	const auto phrase = TextBadgeText(type);
-	DrawTextBadge(
+	const auto phrase = fake
+		? tr::lng_fake_badge(tr::now)
+		: tr::lng_scam_badge(tr::now);
+	DrawScamFakeBadge(
 		p,
 		rect,
 		outerWidth,
@@ -150,9 +133,8 @@ int PeerBadge::drawGetWidth(Painter &p, Descriptor &&descriptor) {
 	Expects(descriptor.customEmojiRepaint != nullptr);
 
 	const auto peer = descriptor.peer;
-	if ((descriptor.scam && (peer->isScam() || peer->isFake()))
-		|| (descriptor.direct && peer->isMonoforum())) {
-		return drawTextBadge(p, descriptor);
+	if (descriptor.scam && (peer->isScam() || peer->isFake())) {
+		return drawScamOrFake(p, descriptor);
 	}
 	const auto verifyCheck = descriptor.verified && peer->isVerified();
 	const auto premiumMark = descriptor.premium
@@ -195,16 +177,10 @@ int PeerBadge::drawGetWidth(Painter &p, Descriptor &&descriptor) {
 	return 0;
 }
 
-int PeerBadge::drawTextBadge(Painter &p, const Descriptor &descriptor) {
-	const auto type = [&] {
-		if (descriptor.peer->isScam()) {
-			return TextBadgeType::Scam;
-		} else if (descriptor.peer->isFake()) {
-			return TextBadgeType::Fake;
-		}
-		return TextBadgeType::Direct;
-	}();
-	const auto phrase = TextBadgeText(type);
+int PeerBadge::drawScamOrFake(Painter &p, const Descriptor &descriptor) {
+	const auto phrase = descriptor.peer->isScam()
+		? tr::lng_scam_badge(tr::now)
+		: tr::lng_fake_badge(tr::now);
 	const auto phraseWidth = st::dialogsScamFont->width(phrase);
 	const auto width = st::dialogsScamPadding.left()
 		+ phraseWidth
@@ -221,13 +197,11 @@ int PeerBadge::drawTextBadge(Painter &p, const Descriptor &descriptor) {
 		rectForName.y() + (rectForName.height() - height) / 2,
 		width,
 		height);
-	DrawTextBadge(
+	DrawScamFakeBadge(
 		p,
 		rect,
 		descriptor.outerWidth,
-		*((type == TextBadgeType::Direct)
-			? descriptor.direct
-			: descriptor.scam),
+		*descriptor.scam,
 		phrase,
 		phraseWidth);
 	return st::dialogsScamSkip + width;

@@ -40,7 +40,6 @@ class ScrollArea;
 class PlainShadow;
 class FlatButton;
 struct PreparedList;
-struct PreparedBundle;
 class SendFilesWay;
 class ImportantTooltip;
 } // namespace Ui
@@ -257,11 +256,15 @@ private:
 		std::optional<bool> overrideSendImagesAsPhotos,
 		const QString &insertTextOnCancel = QString());
 	bool showSendingFilesError(const Ui::PreparedList &list) const;
-	bool showSendingFilesError(const Ui::PreparedBundle &bundle) const;
-
+	bool showSendingFilesError(
+		const Ui::PreparedList &list,
+		std::optional<bool> compress) const;
 	void sendingFilesConfirmed(
-		std::shared_ptr<Ui::PreparedBundle> bundle,
-		Api::SendOptions options);
+		Ui::PreparedList &&list,
+		Ui::SendFilesWay way,
+		TextWithTags &&caption,
+		Api::SendOptions options,
+		bool ctrlShiftEnter);
 
 	bool sendExistingDocument(
 		not_null<DocumentData*> document,

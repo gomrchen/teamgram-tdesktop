@@ -53,7 +53,6 @@ enum class Wrap {
 	Narrow,
 	Side,
 	Search,
-	StoryAlbumEdit,
 };
 
 struct SelectedItem {
@@ -65,7 +64,6 @@ struct SelectedItem {
 	bool canForward = false;
 	bool canToggleStoryPin = false;
 	bool canUnpinStory = false;
-	bool storyInProfile = false;
 };
 
 struct SelectedItems {
@@ -81,8 +79,7 @@ enum class SelectionAction {
 	Forward,
 	Delete,
 	ToggleStoryPin,
-	ToggleStoryToProfile,
-	ToggleStoryToArchive,
+	ToggleStoryInProfile,
 };
 
 class WrapWidget final : public Window::SectionWidget {
@@ -145,8 +142,6 @@ public:
 	[[nodiscard]] rpl::producer<> removeRequests() const override {
 		return _removeRequests.events();
 	}
-
-	[[nodiscard]] rpl::producer<SelectedItems> selectedListValue() const;
 
 	void replaceSwipeHandler(Ui::Controls::SwipeHandlerArgs *incompleteArgs);
 
@@ -211,6 +206,7 @@ private:
 		not_null<Window::SessionController*> window,
 		not_null<ContentMemento*> memento);
 
+	rpl::producer<SelectedItems> selectedListValue() const;
 	bool requireTopBarSearch() const;
 
 	void addTopBarMenuButton();

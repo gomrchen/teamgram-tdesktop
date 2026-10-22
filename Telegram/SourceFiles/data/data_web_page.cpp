@@ -14,7 +14,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_photo.h"
 #include "data/data_channel.h"
 #include "data/data_document.h"
-#include "data/data_star_gift.h"
 #include "core/local_url_handlers.h"
 #include "lang/lang_keys.h"
 #include "iv/iv_data.h"
@@ -160,8 +159,6 @@ WebPageType ParseWebPageType(
 		return WebPageType::VoiceChat;
 	} else if (type == u"telegram_livestream"_q) {
 		return WebPageType::Livestream;
-	} else if (type == u"telegram_call"_q) {
-		return WebPageType::ConferenceCall;
 	} else if (type == u"telegram_user"_q) {
 		return WebPageType::User;
 	} else if (type == u"telegram_botapp"_q) {
@@ -174,12 +171,6 @@ WebPageType ParseWebPageType(
 		return WebPageType::Giftcode;
 	} else if (type == u"telegram_stickerset"_q) {
 		return WebPageType::StickerSet;
-	} else if (type == u"telegram_story_album"_q) {
-		return WebPageType::StoryAlbum;
-	} else if (type == u"telegram_collection"_q) {
-		return WebPageType::GiftCollection;
-	} else if (type == u"telegram_auction"_q) {
-		return WebPageType::Auction;
 	} else if (hasIV) {
 		return WebPageType::ArticleWithIV;
 	} else {
@@ -235,7 +226,6 @@ bool WebPageData::applyChanges(
 		std::unique_ptr<Iv::Data> newIv,
 		std::unique_ptr<WebPageStickerSet> newStickerSet,
 		std::shared_ptr<Data::UniqueGift> newUniqueGift,
-		std::unique_ptr<WebPageAuction> newAuction,
 		int newDuration,
 		const QString &newAuthor,
 		bool newHasLargeMedia,
@@ -271,10 +261,7 @@ bool WebPageData::applyChanges(
 	const auto hasSiteName = !resultSiteName.isEmpty() ? 1 : 0;
 	const auto hasTitle = !resultTitle.isEmpty() ? 1 : 0;
 	const auto hasDescription = !newDescription.text.isEmpty() ? 1 : 0;
-	const auto allowLargeMediaDocument = newDocument
-		&& newDocument->isVideoFile()
-		&& newPhoto;
-	if ((!allowLargeMediaDocument && newDocument)
+	if (newDocument
 		|| !newCollage.items.empty()
 		|| !newPhoto
 		|| (hasSiteName + hasTitle + hasDescription < 2)) {
@@ -298,7 +285,6 @@ bool WebPageData::applyChanges(
 		&& (!iv || iv->partial() == newIv->partial())
 		&& (!stickerSet == !newStickerSet)
 		&& (!uniqueGift == !newUniqueGift)
-		&& (!auction == !newAuction)
 		&& duration == newDuration
 		&& author == resultAuthor
 		&& hasLargeMedia == (newHasLargeMedia ? 1 : 0)
@@ -324,7 +310,6 @@ bool WebPageData::applyChanges(
 	iv = std::move(newIv);
 	stickerSet = std::move(newStickerSet);
 	uniqueGift = std::move(newUniqueGift);
-	auction = std::move(newAuction);
 	duration = newDuration;
 	author = resultAuthor;
 	pendingTill = newPendingTill;
@@ -349,16 +334,6 @@ void WebPageData::ApplyChanges(
 		not_null<Main::Session*> session,
 		ChannelData *channel,
 		const MTPmessages_Messages &result) {
-	const auto list = result.match([](
-			const MTPDmessages_messagesNotModified &) {
-		LOG(("API Error: received messages.messagesNotModified! "
-			"(WebPageData::ApplyChanges)"));
-		return static_cast<const QVector<MTPMessage>*>(nullptr);
-	}, [&](const auto &data) {
-		session->data().processUsers(data.vusers());
-		session->data().processChats(data.vchats());
-		return &data.vmessages().v;
-	});
 	result.match([&](
 			const MTPDmessages_channelMessages &data) {
 		if (channel) {
@@ -370,12 +345,15 @@ void WebPageData::ApplyChanges(
 		}
 	}, [&](const auto &) {
 	});
-	result.match([](
+	const auto list = result.match([](
 			const MTPDmessages_messagesNotModified &) {
+		LOG(("API Error: received messages.messagesNotModified! "
+			"(WebPageData::ApplyChanges)"));
+		return static_cast<const QVector<MTPMessage>*>(nullptr);
 	}, [&](const auto &data) {
-		if (channel) {
-			channel->processTopics(data.vtopics());
-		}
+		session->data().processUsers(data.vusers());
+		session->data().processChats(data.vchats());
+		return &data.vmessages().v;
 	});
 	if (!list) {
 		return;
@@ -392,7 +370,7 @@ void WebPageData::ApplyChanges(
 		}, [&](const auto &) {
 		});
 	}
-	session->data().sendWebPageGamePollTodoListNotifications();
+	session->data().sendWebPageGamePollNotifications();
 }
 
 QString WebPageData::displayedSiteName() const {

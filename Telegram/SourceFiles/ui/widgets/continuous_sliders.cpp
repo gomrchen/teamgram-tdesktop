@@ -8,7 +8,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/continuous_sliders.h"
 
 #include "ui/painter.h"
-#include "ui/rect.h"
 #include "base/timer.h"
 #include "base/platform/base_platform_info.h"
 #include "styles/style_widgets.h"
@@ -131,55 +130,6 @@ void ContinuousSlider::wheelEvent(QWheelEvent *e) {
 	_byWheelFinished->callOnce(kByWheelFinishedTimeout);
 }
 
-void ContinuousSlider::keyPressEvent(QKeyEvent *e) {
-	const auto changeBy = [&](float64 step) {
-		Expects(step != 0.);
-
-		auto steps = 0;
-		while (true) {
-			++steps;
-			auto result = _value + (steps * step);
-			const auto stopping = (result <= 0.) || (result >= 1.);
-			if (_adjustCallback) {
-				result = _adjustCallback(result);
-			}
-			result = std::clamp(result, 0., 1.);
-			if (result != _value || stopping) {
-				return result;
-			}
-		}
-	};
-
-	const auto newValue = [&] {
-		constexpr auto kSmallStep = 0.01;
-		constexpr auto kLargeStep = 0.10;
-		switch (e->key()) {
-		case Qt::Key_Right:
-		case Qt::Key_Up: return changeBy(kSmallStep);
-		case Qt::Key_Left:
-		case Qt::Key_Down: return changeBy(-kSmallStep);
-		case Qt::Key_PageUp: return changeBy(kLargeStep);
-		case Qt::Key_PageDown: return changeBy(-kLargeStep);
-		case Qt::Key_Home: return changeBy(-1.);
-		case Qt::Key_End: return changeBy(1.);
-		default: e->ignore();
-		}
-		return _value;
-	}();
-
-	if (_value == newValue) {
-		return;
-	}
-	setValue(newValue);
-	if (_changeProgressCallback) {
-		_changeProgressCallback(_value);
-	}
-	if (_changeFinishedCallback) {
-		_changeFinishedCallback(_value);
-	}
-	accessibilityValueChanged();
-}
-
 void ContinuousSlider::updateDownValueFromPos(const QPoint &pos) {
 	_downValue = computeValue(pos);
 	update();
@@ -271,8 +221,8 @@ void MediaSlider::addDivider(float64 atValue, const QSize &size) {
 	_dividers.push_back(Divider{ atValue, size });
 }
 
-void MediaSlider::setColorOverrides(ColorOverrides overrides) {
-	_overrides = std::move(overrides);
+void MediaSlider::setActiveFgOverride(std::optional<QColor> color) {
+	_activeFgOverride = color;
 	update();
 }
 
@@ -287,8 +237,6 @@ void MediaSlider::paintEvent(QPaintEvent *e) {
 	p.setOpacity(fadeOpacity());
 
 	const auto horizontal = isHorizontal();
-	const auto borderWidth = _st.borderWidth;
-	const auto borderHalf = borderWidth / 2;
 	const auto radius = _st.width / 2;
 	const auto disabled = isDisabled();
 	const auto over = getCurrentOverFactor();
@@ -324,46 +272,23 @@ void MediaSlider::paintEvent(QPaintEvent *e) {
 	const auto end = from + length;
 	const auto activeFg = disabled
 		? _st.activeFgDisabled
-		: _overrides.activeFg
-		? QBrush(*_overrides.activeFg)
+		: _activeFgOverride
+		? QBrush(*_activeFgOverride)
 		: anim::brush(_st.activeFg, _st.activeFgOver, over);
 	const auto receivedTillFg = _st.receivedTillFg;
 	const auto inactiveFg = disabled
 		? _st.inactiveFgDisabled
-		: _overrides.inactiveFg
-		? QBrush(*_overrides.inactiveFg)
 		: anim::brush(_st.inactiveFg, _st.inactiveFgOver, over);
-	const auto borderFg = _st.borderFg;
 	if (mid > from) {
 		const auto fromClipRect = horizontal
 			? QRect(0, 0, mid, height())
 			: QRect(0, 0, width(), mid);
 		const auto till = std::min(mid + radius, end);
 		const auto fromRect = horizontal
-			? QRect(
-				from + borderHalf,
-				(height() - _st.width) / 2 + borderHalf,
-				till - from - borderWidth,
-				_st.width - borderWidth)
-			: QRect(
-				(width() - _st.width) / 2 + borderHalf,
-				from + borderHalf,
-				_st.width - borderWidth,
-				till - from - borderWidth);
+			? QRect(from, (height() - _st.width) / 2, till - from, _st.width)
+			: QRect((width() - _st.width) / 2, from, _st.width, till - from);
 		p.setClipRect(fromClipRect);
-		if (borderWidth > 0) {
-			const auto borderPen = _overrides.activeBorder
-				? QPen(*_overrides.activeBorder, borderWidth)
-				: QPen(borderFg, borderWidth);
-			const auto bgBrush = _overrides.activeBg
-				? QBrush(*_overrides.activeBg)
-				: (horizontal ? borderFg : inactiveFg);
-			p.setPen(borderPen);
-			p.setBrush(bgBrush);
-		} else {
-			p.setPen(Qt::NoPen);
-			p.setBrush(horizontal ? activeFg : inactiveFg);
-		}
+		p.setBrush(horizontal ? activeFg : inactiveFg);
 		p.drawRoundedRect(fromRect, radius, radius);
 	}
 	if (till > mid) {
@@ -387,24 +312,16 @@ void MediaSlider::paintEvent(QPaintEvent *e) {
 		const auto begin = std::max(till - radius, from);
 		const auto endRect = horizontal
 			? QRect(
-				begin + borderHalf,
-				(height() - _st.width) / 2 + borderHalf,
-				end - begin - borderWidth,
-				_st.width - borderWidth)
+				begin,
+				(height() - _st.width) / 2,
+				end - begin,
+				_st.width)
 			: QRect(
-				(width() - _st.width) / 2 + borderHalf,
-				begin + borderHalf,
-				_st.width - borderWidth,
-				end - begin - borderWidth);
+				(width() - _st.width) / 2,
+				begin,
+				_st.width,
+				end - begin);
 		p.setClipRect(endClipRect);
-		if (borderWidth > 0) {
-			const auto endBorderPen = _overrides.inactiveBorder
-				? QPen(*_overrides.inactiveBorder, borderWidth)
-				: QPen(borderFg, borderWidth);
-			p.setPen(endBorderPen);
-		} else {
-			p.setPen(Qt::NoPen);
-		}
 		p.setBrush(horizontal ? inactiveFg : activeFg);
 		p.drawRoundedRect(endRect, radius, radius);
 	}
@@ -461,19 +378,7 @@ void MediaSlider::paintEvent(QPaintEvent *e) {
 			((1. - markerSizeRatio) * size) / 2.);
 		if (remove * 2 < size) {
 			p.setClipRect(rect());
-			const auto seekFg = _overrides.seekFg
-				? QBrush(*_overrides.seekFg)
-				: activeFg;
-			if (borderWidth > 0) {
-				const auto seekBorderPen = _overrides.seekBorder
-					? QPen(*_overrides.seekBorder, borderWidth)
-					: QPen(borderFg, borderWidth);
-				p.setPen(seekBorderPen);
-				p.setBrush(seekFg);
-			} else {
-				p.setPen(Qt::NoPen);
-				p.setBrush(seekFg);
-			}
+			p.setBrush(activeFg);
 			const auto xshift = horizontal
 				? std::max(
 					seekButton.x() + seekButton.width() - remove - width(),
@@ -484,13 +389,9 @@ void MediaSlider::paintEvent(QPaintEvent *e) {
 				: std::max(
 					seekButton.y() + seekButton.height() - remove - height(),
 					0) + std::min(seekButton.y() + remove, 0);
-			auto ellipseRect = (seekButton - Margins(remove)).translated(
-				-xshift,
-				-yshift);
-			if (borderWidth > 0) {
-				ellipseRect -= Margins(borderHalf);
-			}
-			p.drawEllipse(ellipseRect);
+			p.drawEllipse(seekButton.marginsRemoved(
+				QMargins(remove, remove, remove, remove)
+			).translated(-xshift, -yshift));
 		}
 	}
 }

@@ -42,7 +42,6 @@ public:
 			Imported       = 0x040,
 			Shortcut       = 0x080,
 			EstimateDate   = 0x100,
-			ForwardedDate  = 0x200,
 			//Unread, // We don't want to pass and update it in Date for now.
 		};
 		friend inline constexpr bool is_flag_type(Flag) { return true; };
@@ -51,9 +50,7 @@ public:
 		QDateTime date;
 		QString author;
 		EffectId effectId = 0;
-		int64 tonStake = 0;
 		int stars = 0;
-		TimeId scheduleRepeatPeriod = 0;
 		std::optional<int> views;
 		std::optional<int> replies;
 		std::optional<int> forwardsCount;
@@ -79,6 +76,9 @@ public:
 		bool inverted,
 		const PaintContext &context) const;
 
+	void animateEffect(
+		Ui::ReactionFlyAnimationArgs &&args,
+		Fn<void()> repaint);
 	[[nodiscard]] auto takeEffectAnimation()
 		-> std::unique_ptr<Ui::ReactionFlyAnimation>;
 	void continueEffectAnimation(

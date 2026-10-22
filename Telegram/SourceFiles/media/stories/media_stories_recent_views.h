@@ -58,9 +58,7 @@ struct RecentViewsData {
 		const RecentViewsData &) = default;
 };
 
-[[nodiscard]] RecentViewsType RecentViewsTypeFor(
-	not_null<PeerData*> peer,
-	bool videoStream);
+[[nodiscard]] RecentViewsType RecentViewsTypeFor(not_null<PeerData*> peer);
 [[nodiscard]] bool CanViewReactionsFor(not_null<PeerData*> peer);
 
 class RecentViews final {

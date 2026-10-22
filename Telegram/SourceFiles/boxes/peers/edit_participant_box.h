@@ -22,8 +22,11 @@ template <typename Widget>
 class SlideWrap;
 } // namespace Ui
 
-class ChannelOwnershipTransfer;
-class EditTagControl;
+namespace Core {
+struct CloudPasswordResult;
+} // namespace Core
+
+class PasscodeBox;
 
 class EditParticipantBox : public Ui::BoxContent {
 public:
@@ -48,8 +51,6 @@ protected:
 
 	template <typename Widget>
 	Widget *addControl(object_ptr<Widget> widget, QMargins margin = {});
-
-	void setCoverMode(bool enabled);
 
 	bool hasAdminRights() const {
 		return _hasAdminRights;
@@ -86,7 +87,7 @@ public:
 			Fn<void(
 				ChatAdminRightsInfo,
 				ChatAdminRightsInfo,
-				const std::optional<QString> &rank)> callback) {
+				const QString &rank)> callback) {
 		_saveCallback = std::move(callback);
 	}
 
@@ -96,13 +97,22 @@ protected:
 private:
 	[[nodiscard]] ChatAdminRightsInfo defaultRights() const;
 
+	not_null<Ui::InputField*> addRankInput(
+		not_null<Ui::VerticalLayout*> container);
 	void transferOwnership();
-	[[nodiscard]] bool canSave() const {
+	void transferOwnershipChecked();
+	bool handleTransferPasswordError(const QString &error);
+	void requestTransferPassword(not_null<ChannelData*> channel);
+	void sendTransferRequestFrom(
+		QPointer<PasscodeBox> box,
+		not_null<ChannelData*> channel,
+		const Core::CloudPasswordResult &result);
+	bool canSave() const {
 		return _saveCallback != nullptr;
 	}
 	void finishAddAdmin();
 	void refreshButtons();
-	[[nodiscard]] bool canTransferOwnership() const;
+	bool canTransferOwnership() const;
 	not_null<Ui::SlideWrap<Ui::RpWidget>*> setupTransferButton(
 		not_null<Ui::VerticalLayout*> container,
 		bool isGroup);
@@ -112,20 +122,19 @@ private:
 	Fn<void(
 		ChatAdminRightsInfo,
 		ChatAdminRightsInfo,
-		const std::optional<QString> &rank)> _saveCallback;
+		const QString &rank)> _saveCallback;
 
-	base::weak_qptr<Ui::BoxContent> _confirmBox;
+	QPointer<Ui::BoxContent> _confirmBox;
 	Ui::Checkbox *_addAsAdmin = nullptr;
 	Ui::SlideWrap<Ui::VerticalLayout> *_adminControlsWrap = nullptr;
-	EditTagControl *_tagControl = nullptr;
-
+	Ui::InputField *_rank = nullptr;
+	mtpRequestId _checkTransferRequestId = 0;
+	mtpRequestId _transferRequestId = 0;
 	Fn<void()> _save, _finishSave;
 
 	TimeId _promotedSince = 0;
 	UserData *_by = nullptr;
 	std::optional<EditAdminBotFields> _addingBot;
-
-	std::unique_ptr<ChannelOwnershipTransfer> _ownershipTransfer;
 
 };
 
@@ -140,7 +149,6 @@ public:
 		not_null<UserData*> user,
 		bool hasAdminRights,
 		ChatRestrictionsInfo rights,
-		const QString &rank,
 		UserData *by,
 		TimeId since);
 
@@ -166,8 +174,6 @@ private:
 	TimeId getRealUntilValue() const;
 
 	const ChatRestrictionsInfo _oldRights;
-	const QString _oldRank;
-	EditTagControl *_tagControl = nullptr;
 	UserData *_by = nullptr;
 	TimeId _since = 0;
 	TimeId _until = 0;

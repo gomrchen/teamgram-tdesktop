@@ -10,20 +10,15 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/rp_widget.h"
 #include "ui/effects/animations.h"
 
-class Painter;
-class QOpenGLFunctions;
-
 namespace Ui {
 class AbstractButton;
 class RpWidgetWrap;
-} // namespace Ui
-
-namespace Ui::GL {
+namespace GL {
 enum class Backend;
 struct Capabilities;
 struct ChosenRenderer;
-class Renderer;
-} // namespace Ui::GL
+} // namespace GL
+} // namespace Ui
 
 namespace Calls {
 class GroupCall;
@@ -68,9 +63,7 @@ public:
 	Viewport(
 		not_null<QWidget*> parent,
 		PanelMode mode,
-		Ui::GL::Backend backend,
-		Ui::RpWidgetWrap *borrowedRp = nullptr,
-		bool borrowedOpenGL = false);
+		Ui::GL::Backend backend);
 	~Viewport();
 
 	[[nodiscard]] not_null<QWidget*> widget() const;
@@ -99,16 +92,6 @@ public:
 	[[nodiscard]] rpl::producer<VideoEndpoint> clicks() const;
 	[[nodiscard]] rpl::producer<VideoQualityRequest> qualityRequests() const;
 	[[nodiscard]] rpl::producer<bool> mouseInsideValue() const;
-
-	void ensureBorrowedRenderer(QOpenGLFunctions &f);
-	void ensureBorrowedCleared(QOpenGLFunctions *f);
-	void borrowedPaint(QOpenGLFunctions &f);
-
-	void ensureBorrowedRenderer();
-	void ensureBorrowedCleared();
-	void borrowedPaint(Painter &p, const QRegion &clip);
-
-	[[nodiscard]] QPoint borrowedOrigin() const;
 
 	[[nodiscard]] rpl::lifetime &lifetime();
 
@@ -157,7 +140,6 @@ private:
 
 	void setup();
 	[[nodiscard]] bool wide() const;
-	[[nodiscard]] bool videoStream() const;
 
 	void updateCursor();
 	void updateTilesGeometry();
@@ -186,11 +168,10 @@ private:
 
 	[[nodiscard]] Ui::GL::ChosenRenderer chooseRenderer(
 		Ui::GL::Backend backend);
-	[[nodiscard]] std::unique_ptr<Ui::GL::Renderer> makeRenderer();
-	void updateMyWidgetPart();
 
 	PanelMode _mode = PanelMode();
 	bool _opengl = false;
+	bool _geometryStaleAfterModeChange = false;
 	const std::unique_ptr<Ui::RpWidgetWrap> _content;
 	std::vector<std::unique_ptr<VideoTile>> _tiles;
 	std::vector<not_null<VideoTile*>> _tilesForOrder;
@@ -212,13 +193,6 @@ private:
 	Selection _selected;
 	Selection _pressed;
 	rpl::variable<bool> _mouseInside = false;
-
-	Ui::RpWidgetWrap * const _borrowed = nullptr;
-	QRect _borrowedGeometry;
-	std::unique_ptr<Ui::GL::Renderer> _borrowedRenderer;
-	QMetaObject::Connection _borrowedConnection;
-
-	rpl::lifetime _lifetime;
 
 };
 

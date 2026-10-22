@@ -94,7 +94,7 @@ void ColorsLine::fillButtons() {
 	_container = base::make_unique_q<Ui::RpWidget>(this);
 	const auto container = _container.get();
 	sizeValue(
-	) | rpl::on_next([=](const QSize &s) {
+	) | rpl::start_with_next([=](const QSize &s) {
 		container->setGeometry(Rect(s));
 	}, container->lifetime());
 
@@ -245,11 +245,12 @@ object_ptr<Ui::RpWidget> CreateGradientEditor(
 		std::vector<QColor> colors;
 	};
 	const auto preview = container->add(
-		object_ptr<EmojiUserpic>(
+		object_ptr<Ui::CenterWrap<EmojiUserpic>>(
 			container,
-			Size(st::defaultUserpicButton.photoSize),
-			false),
-		style::al_top);
+			object_ptr<EmojiUserpic>(
+				container,
+				Size(st::defaultUserpicButton.photoSize),
+				false)))->entity();
 	preview->setDuration(0);
 	if (document) {
 		preview->setDocument(document);
@@ -270,15 +271,13 @@ object_ptr<Ui::RpWidget> CreateGradientEditor(
 	Ui::AddDivider(container);
 	Ui::AddSkip(container);
 
-	auto ownedEditor = object_ptr<ColorEditor>(
+	const auto editor = container->add(object_ptr<ColorEditor>(
 		container,
 		ColorEditor::Mode::HSL,
-		state->colors.back());
-	container->resizeToWidth(ownedEditor->width());
-	const auto editor = container->add(std::move(ownedEditor));
+		state->colors.back()));
 
 	buttonsContainer->chosenChanges(
-	) | rpl::on_next([=](ColorsLine::Chosen *chosen) {
+	) | rpl::start_with_next([=](ColorsLine::Chosen *chosen) {
 		if (chosen) {
 			const auto color = state->colors[chosen->index()];
 			editor->showColor(color);
@@ -290,10 +289,10 @@ object_ptr<Ui::RpWidget> CreateGradientEditor(
 		communication.result(state->colors);
 	});
 	// editor->submitRequests(
-	// ) | rpl::on_next([=] {
+	// ) | rpl::start_with_next([=] {
 	// }, editor->lifetime());
 	editor->colorValue(
-	) | rpl::on_next([=](QColor c) {
+	) | rpl::start_with_next([=](QColor c) {
 		if (const auto chosen = buttonsContainer->chosen()) {
 			chosen->setBrush(c);
 			state->colors[chosen->index()] = c;
@@ -303,10 +302,11 @@ object_ptr<Ui::RpWidget> CreateGradientEditor(
 
 	base::take(
 		communication.triggers
-	) | rpl::on_next([=] {
+	) | rpl::start_with_next([=] {
 		save();
 	}, container->lifetime());
 
+	container->resizeToWidth(editor->width());
 	buttonsContainer->init();
 
 	return container;

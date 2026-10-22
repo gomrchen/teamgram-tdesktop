@@ -50,7 +50,6 @@ private:
 [[nodiscard]] style::colorizer ColorizerFrom(
 	const EmbeddedScheme &scheme,
 	const QColor &color);
-[[nodiscard]] std::optional<QColor> SystemAccentColor();
 [[nodiscard]] style::colorizer ColorizerForTheme(const QString &absolutePath);
 
 void Colorize(

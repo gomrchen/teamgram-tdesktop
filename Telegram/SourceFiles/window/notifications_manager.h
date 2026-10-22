@@ -17,7 +17,6 @@ class History;
 namespace Data {
 class Session;
 class ForumTopic;
-class SavedSublist;
 class Thread;
 struct ItemNotification;
 enum class ItemNotificationType;
@@ -42,7 +41,6 @@ class Track;
 } // namespace Media::Audio
 
 namespace Window {
-class Controller;
 class SessionController;
 } // namespace Window
 
@@ -88,18 +86,10 @@ using toggle = option<bool>;
 
 namespace Window::Notifications {
 
-extern const char kOptionCustomNotification[];
 extern const char kOptionGNotification[];
 extern base::options::toggle OptionGNotification;
 
-extern const char kOptionHideReplyButton[];
-
 class Manager;
-
-struct ActivateOptions {
-	TextWithTags draft;
-	bool allowNewWindow = false;
-};
 
 class System final {
 public:
@@ -110,17 +100,12 @@ public:
 
 	void createManager();
 	void setManager(Fn<std::unique_ptr<Manager>()> create);
-	[[nodiscard]] Manager &manager() const;
-	[[nodiscard]] rpl::producer<> managerChanged() const;
-	[[nodiscard]] bool nativeEnforced() const;
 
 	void checkDelayed();
 	void schedule(Data::ItemNotification notification);
 	void clearFromTopic(not_null<Data::ForumTopic*> topic);
-	void clearFromSublist(not_null<Data::SavedSublist*> sublist);
 	void clearFromHistory(not_null<History*> history);
 	void clearIncomingFromTopic(not_null<Data::ForumTopic*> topic);
-	void clearIncomingFromSublist(not_null<Data::SavedSublist*> sublist);
 	void clearIncomingFromHistory(not_null<History*> history);
 	void clearFromSession(not_null<Main::Session*> session);
 	void clearFromItem(not_null<HistoryItem*> item);
@@ -131,13 +116,7 @@ public:
 	[[nodiscard]] rpl::producer<ChangeType> settingsChanged() const;
 	void notifySettingsChanged(ChangeType type);
 
-	[[nodiscard]] bool volumeSupported() const;
-	[[nodiscard]] rpl::producer<bool> volumeSupportedValue() const;
-
-	void playSound(
-		not_null<Main::Session*> session,
-		DocumentId id,
-		float64 volumeOverride = -1);
+	void playSound(not_null<Main::Session*> session, DocumentId id);
 	[[nodiscard]] QByteArray lookupSoundBytes(
 		not_null<Data::Session*> owner,
 		DocumentId id);
@@ -226,7 +205,6 @@ private:
 		crl::time> _sentReactionNotifications;
 
 	std::unique_ptr<Manager> _manager;
-	rpl::event_stream<> _managerChanged;
 
 	rpl::event_stream<ChangeType> _settingsChanged;
 
@@ -238,9 +216,6 @@ private:
 	base::flat_map<
 		not_null<Data::ForumTopic*>,
 		rpl::lifetime> _watchedTopics;
-	base::flat_map<
-		not_null<Data::SavedSublist*>,
-		rpl::lifetime> _watchedSublists;
 
 	int _lastForwardedCount = 0;
 	uint64 _lastHistorySessionId = 0;
@@ -257,7 +232,6 @@ public:
 		uint64 sessionId = 0;
 		PeerId peerId = 0;
 		MsgId topicRootId = 0;
-		PeerId monoforumPeerId = 0;
 
 		friend inline auto operator<=>(
 			const ContextId&,
@@ -300,9 +274,6 @@ public:
 	void clearFromTopic(not_null<Data::ForumTopic*> topic) {
 		doClearFromTopic(topic);
 	}
-	void clearFromSublist(not_null<Data::SavedSublist*> sublist) {
-		doClearFromSublist(sublist);
-	}
 	void clearFromHistory(not_null<History*> history) {
 		doClearFromHistory(history);
 	}
@@ -312,7 +283,7 @@ public:
 
 	void notificationActivated(
 		NotificationId id,
-		ActivateOptions &&options = {});
+		const TextWithTags &draft = {});
 	void notificationReplied(NotificationId id, const TextWithTags &reply);
 
 	struct DisplayOptions {
@@ -345,7 +316,9 @@ public:
 	[[nodiscard]] bool skipToast() const {
 		return doSkipToast();
 	}
-	void maybePlaySound(Fn<void()> playSound);
+	void maybePlaySound(Fn<void()> playSound) {
+		doMaybePlaySound(std::move(playSound));
+	}
 	void maybeFlashBounce(Fn<void()> flashBounce) {
 		doMaybeFlashBounce(std::move(flashBounce));
 	}
@@ -363,8 +336,6 @@ protected:
 	virtual void doClearAllFast() = 0;
 	virtual void doClearFromItem(not_null<HistoryItem*> item) = 0;
 	virtual void doClearFromTopic(not_null<Data::ForumTopic*> topic) = 0;
-	virtual void doClearFromSublist(
-		not_null<Data::SavedSublist*> sublist) = 0;
 	virtual void doClearFromHistory(not_null<History*> history) = 0;
 	virtual void doClearFromSession(not_null<Main::Session*> session) = 0;
 	[[nodiscard]] virtual bool doSkipToast() const = 0;
@@ -382,10 +353,9 @@ protected:
 	[[nodiscard]] virtual QString accountNameSeparator();
 
 private:
-	Window::SessionController *openNotificationMessage(
+	void openNotificationMessage(
 		not_null<History*> history,
-		MsgId messageId,
-		bool openSeparated);
+		MsgId messageId);
 
 	const not_null<System*> _system;
 
@@ -401,7 +371,6 @@ public:
 	struct NotificationInfo {
 		not_null<PeerData*> peer;
 		MsgId topicRootId = 0;
-		PeerId monoforumPeerId = 0;
 		MsgId itemId = 0;
 		QString title;
 		QString subtitle;
@@ -451,8 +420,6 @@ protected:
 	}
 	void doClearFromTopic(not_null<Data::ForumTopic*> topic) override {
 	}
-	void doClearFromSublist(not_null<Data::SavedSublist*> sublist) override {
-	}
 	void doClearFromHistory(not_null<History*> history) override {
 	}
 	void doClearFromSession(not_null<Main::Session*> session) override {
@@ -470,7 +437,5 @@ protected:
 };
 
 [[nodiscard]] QString WrapFromScheduled(const QString &text);
-
-[[nodiscard]] QRect NotificationDisplayRect(Window::Controller *controller);
 
 } // namespace Window::Notifications

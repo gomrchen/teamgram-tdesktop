@@ -8,13 +8,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/view/media/history_view_service_box.h"
 
 #include "core/ui_integration.h"
-#include "data/data_session.h"
 #include "history/view/media/history_view_sticker_player_abstract.h"
 #include "history/view/history_view_cursor_state.h"
 #include "history/view/history_view_element.h"
 #include "history/view/history_view_text_helper.h"
 #include "history/history.h"
-#include "history/history_item.h"
 #include "lang/lang_keys.h"
 #include "ui/chat/chat_style.h"
 #include "ui/effects/animation_value.h"
@@ -25,7 +23,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/rect.h"
 #include "ui/power_saving.h"
 #include "styles/style_chat.h"
-#include "styles/style_credits.h"
 #include "styles/style_premium.h"
 #include "styles/style_layers.h"
 
@@ -54,11 +51,6 @@ ServiceBox::ServiceBox(
 		.session = &parent->history()->session(),
 		.repaint = [parent] { parent->customEmojiRepaint(); },
 	}))
-, _author(
-	st::uniqueGiftReleasedBy.style,
-	_content->author(),
-	kMarkupTextOptions,
-	_maxWidth)
 , _subtitle(
 	st::premiumPreviewAbout.style,
 	Ui::Text::Filtered(
@@ -87,12 +79,6 @@ ServiceBox::ServiceBox(
 			? 0
 			: (_title.countHeight(_maxWidth)
 				+ st::msgServiceGiftBoxTitlePadding.bottom()))
-		+ (_author.isEmpty()
-			? 0
-			: (st::giftBoxReleasedByMargin.top()
-				+ st::uniqueGiftReleasedBy.style.font->height
-				+ st::giftBoxReleasedByMargin.bottom()
-				+ st::msgServiceGiftBoxTitlePadding.bottom()))
 		+ _subtitle.countHeight(_maxWidth)
 		+ (!_content->button()
 			? 0
@@ -102,7 +88,7 @@ ServiceBox::ServiceBox(
 	InitElementTextPart(_parent, _subtitle);
 	if (auto text = _content->button()) {
 		_button.repaint = [=] { repaint(); };
-		std::move(text) | rpl::on_next([=](QString value) {
+		std::move(text) | rpl::start_with_next([=](QString value) {
 			_button.text.setText(st::semiboldTextStyle, value);
 			const auto height = st::msgServiceGiftBoxButtonHeight;
 			const auto &padding = st::msgServiceGiftBoxButtonPadding;
@@ -118,56 +104,15 @@ ServiceBox::ServiceBox(
 			}
 		}, _lifetime);
 	}
-	if (const auto type = _content->buttonMinistars()) {
+	if (_content->buttonMinistars()) {
 		_button.stars = std::make_unique<Ui::Premium::ColoredMiniStars>(
 			[=](const QRect &) { repaint(); },
-			*type);
+			Ui::Premium::MiniStars::Type::SlowStars);
 		_button.lastFg = std::make_unique<QColor>();
-	}
-
-	if (auto changes = _content->changes()) {
-		std::move(changes) | rpl::on_next([=] {
-			applyContentChanges();
-		}, _lifetime);
 	}
 }
 
 ServiceBox::~ServiceBox() = default;
-
-void ServiceBox::applyContentChanges() {
-	const auto subtitleWas = _subtitle.countHeight(_maxWidth);
-
-	const auto parent = _parent;
-	_subtitle = Ui::Text::String(
-		st::premiumPreviewAbout.style,
-		Ui::Text::Filtered(
-			_content->subtitle(),
-			{
-				EntityType::Bold,
-				EntityType::StrikeOut,
-				EntityType::Underline,
-				EntityType::Italic,
-				EntityType::Spoiler,
-				EntityType::CustomEmoji,
-			}),
-			kMarkupTextOptions,
-			_maxWidth,
-			Core::TextContext({
-				.session = &parent->history()->session(),
-				.repaint = [parent] { parent->customEmojiRepaint(); },
-			}));
-	InitElementTextPart(parent, _subtitle);
-	const auto subtitleNow = _subtitle.countHeight(_maxWidth);
-	if (subtitleNow != subtitleWas) {
-		_size.setHeight(_size.height() - subtitleWas + subtitleNow);
-		_innerSize = _size - QSize(0, st::msgServiceGiftBoxTopSkip);
-
-		const auto item = parent->data();
-		item->history()->owner().requestItemResize(item);
-	} else {
-		parent->repaint();
-	}
-}
 
 QSize ServiceBox::countOptimalSize() {
 	return _size;
@@ -181,22 +126,10 @@ void ServiceBox::draw(Painter &p, const PaintContext &context) const {
 	p.translate(0, st::msgServiceGiftBoxTopSkip);
 
 	PainterHighQualityEnabler hq(p);
+	const auto radius = st::msgServiceGiftBoxRadius;
 	p.setPen(Qt::NoPen);
 	p.setBrush(context.st->msgServiceBg());
-
-	const auto radius = st::msgServiceGiftBoxRadius;
-	if (_parent->data()->inlineReplyKeyboard()) {
-		const auto r = Rect(_innerSize);
-		const auto half = r.height() / 2;
-		p.setClipRect(r - QMargins(0, 0, 0, half));
-		p.drawRoundedRect(r, radius, radius);
-		p.setClipRect(r - QMargins(0, r.height() - half, 0, 0));
-		const auto small = Ui::BubbleRadiusSmall();
-		p.drawRoundedRect(r, small, small);
-		p.setClipping(false);
-	} else {
-		p.drawRoundedRect(Rect(_innerSize), radius, radius);
-	}
+	p.drawRoundedRect(Rect(_innerSize), radius, radius);
 
 	if (_button.stars) {
 		const auto &c = context.st->msgServiceFg()->c;
@@ -230,37 +163,6 @@ void ServiceBox::draw(Painter &p, const PaintContext &context) const {
 				.pausedSpoiler = context.paused || On(PowerSaving::kChatSpoiler),
 			});
 			top += _title.countHeight(_maxWidth) + padding.bottom();
-		}
-		if (!_author.isEmpty()) {
-			auto hq = PainterHighQualityEnabler(p);
-			p.setPen(Qt::NoPen);
-			p.setBrush(context.st->msgServiceBg());
-			const auto use = std::min(_maxWidth, _author.maxWidth())
-				+ st::giftBoxReleasedByMargin.left()
-				+ st::giftBoxReleasedByMargin.right();
-			const auto left = st::msgPadding.left() + (_maxWidth - use) / 2;
-			const auto height = st::giftBoxReleasedByMargin.top()
-				+ st::uniqueGiftReleasedBy.style.font->height
-				+ st::giftBoxReleasedByMargin.bottom();
-			const auto radius = height / 2.;
-			p.drawRoundedRect(left, top, use, height, radius, radius);
-
-			auto fg = context.st->msgServiceFg()->c;
-			fg.setAlphaF(0.65 * fg.alphaF());
-			p.setPen(fg);
-			_author.draw(p, {
-				.position = QPoint(
-					left + st::giftBoxReleasedByMargin.left(),
-					top + st::giftBoxReleasedByMargin.top()),
-				.availableWidth = (use
-					- st::giftBoxReleasedByMargin.left()
-					- st::giftBoxReleasedByMargin.right()),
-				.palette = &context.st->serviceTextPalette(),
-				.elisionLines = 1,
-			});
-			p.setPen(context.st->msgServiceFg());
-
-			top += height + st::msgServiceGiftBoxTitlePadding.bottom();
 		}
 		_parent->prepareCustomEmojiPaint(p, context, _subtitle);
 		_subtitle.draw(p, {
@@ -329,23 +231,6 @@ TextState ServiceBox::textState(QPoint point, StateRequest request) const {
 		if (!_title.isEmpty()) {
 			top += _title.countHeight(_maxWidth) + padding.bottom();
 		}
-		if (!_author.isEmpty()) {
-			const auto use = std::min(_maxWidth, _author.maxWidth())
-				+ st::giftBoxReleasedByMargin.left()
-				+ st::giftBoxReleasedByMargin.right();
-			const auto left = st::msgPadding.left() + (_maxWidth - use) / 2;
-			const auto height = st::giftBoxReleasedByMargin.top()
-				+ st::defaultTextStyle.font->height
-				+ st::giftBoxReleasedByMargin.bottom();
-			if (point.x() >= left
-				&& point.y() >= top
-				&& point.x() < left + use
-				&& point.y() < top + height) {
-				result.link = _content->authorLink();
-			}
-			top += height + st::msgServiceGiftBoxTitlePadding.bottom();
-		}
-
 		auto subtitleRequest = request.forText();
 		subtitleRequest.align = style::al_top;
 		const auto state = _subtitle.getState(
